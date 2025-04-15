@@ -31,39 +31,96 @@ def overview():
 @login_required
 def records(folder_id=None):
     """Display medical records organized in folders"""
-    
-    # Initialize variables for template
-    current_folder = None
-    folder_path = []
-    
-    # Get subfolders and documents to display
-    if folder_id:
-        # If folder_id is provided, get that specific folder
-        current_folder = Folder.query.filter_by(id=folder_id, user_id=current_user.id).first_or_404()
-        
+    try:
+        # Get subfolders and documents to display
+        if folder_id:
+            # If folder_id is provided, get that specific folder
+            current_folder = Folder.query.filter_by(
+                id=folder_id, 
+                user_id=current_user.id
+            ).first_or_404()
+            
+            subfolders = Folder.query.filter_by(
+                parent_id=folder_id, 
+                user_id=current_user.id
+            ).order_by(Folder.name).all()
+            
+            documents = Document.query.filter_by(
+                folder_id=folder_id, 
+                user_id=current_user.id
+            ).order_by(Document.upload_date.desc()).all()
+            
+            # Debug logging
+            current_app.logger.debug(f"Current folder: {current_folder.name} (ID: {folder_id})")
+        else:
+            current_folder = None
+            subfolders = Folder.query.filter_by(
+                parent_id=None, 
+                user_id=current_user.id
+            ).order_by(Folder.name).all()
+            
+            documents = Document.query.filter_by(
+                folder_id=None, 
+                user_id=current_user.id
+            ).order_by(Document.upload_date.desc()).all()
+            
+            current_app.logger.debug("Displaying root folder")
+
+        # Debug logging for subfolders and documents
+        current_app.logger.debug(f"Found {len(subfolders)} subfolders:")
+        for folder in subfolders:
+            current_app.logger.debug(f"  - {folder.name} (ID: {folder.id})")
+            
+        current_app.logger.debug(f"Found {len(documents)} documents:")
+        for doc in documents:
+            info = doc.get_file_info()
+            current_app.logger.debug(
+                f"  - {info['filename']} "
+                f"(Path: {info['url_path']}, "
+                f"Type: {info['file_type']}, "
+                f"Exists: {info['file_exists']})"
+            )
+            
         # Build folder path for breadcrumb navigation
+        folder_path = []
         temp_folder = current_folder
-        while temp_folder.parent_id:
+        while temp_folder and temp_folder.parent_id:
             parent = Folder.query.get(temp_folder.parent_id)
             if parent and parent.user_id == current_user.id:
                 folder_path.insert(0, parent)
                 temp_folder = parent
             else:
                 break
+
+        current_app.logger.debug("Template context:")
+        current_app.logger.debug(f"  Current folder: {current_folder.name if current_folder else 'Root'}")
+        current_app.logger.debug(f"  Folder path: {[f.name for f in folder_path]}")
+        current_app.logger.debug(f"  Subfolders count: {len(subfolders)}")
+        current_app.logger.debug(f"  Documents count: {len(documents)}")
         
-        # Get subfolders and documents in current folder
-        subfolders = Folder.query.filter_by(parent_id=folder_id, user_id=current_user.id).all()
-        documents = current_folder.documents.all()
-    else:
-        # If no folder_id, show root level folders and documents
-        subfolders = Folder.query.filter_by(parent_id=None, user_id=current_user.id).all()
-        documents = Document.query.filter_by(folder_id=None, user_id=current_user.id).all()
-    
-    return render_template('dashboard/records.html', 
-                          current_folder=current_folder,
-                          folder_path=folder_path,
-                          subfolders=subfolders,
-                          documents=documents)
+        # Create context dictionary
+        context = {
+            'current_folder': current_folder,
+            'folder_path': folder_path,
+            'subfolders': subfolders,
+            'documents': documents
+        }
+        
+        # Validate and fix document paths before rendering
+        if documents:
+            for doc in documents:
+                # Validate and fix paths if needed
+                doc.validate_and_fix_path()
+                url_path = doc.get_url_path()
+                file_exists = doc.get_file_path().exists() if doc.get_file_path() else False
+                logger.debug(f"Document {doc.original_filename}: URL={url_path}, exists={file_exists}")
+        
+        return render_template('dashboard/records.html', **context)
+                          
+    except Exception as e:
+        logger.error(f"Error in records view: {str(e)}", exc_info=True)
+        flash('Error loading records. Please try again.', 'error')
+        return redirect(url_for('dashboard.index'))
 
 @dashboard.route('/upload', methods=['GET', 'POST'])
 @login_required
@@ -405,9 +462,17 @@ def create_folder_json():
         db.session.rollback()
         logger.error("Unexpected error in create_folder_json: %s", str(e), exc_info=True)
         response['message'] = f'Server error: {str(e)}'
+        response['message'] = f'Server error: {str(e)}'
         return jsonify(response), 500
+
+@dashboard.after_request
+def after_request(response):
+    """Log template context after request"""
+    if response.mimetype == 'text/html':
+        logger.debug("Template rendered with status: %s", response.status)
+    return response
+
 @dashboard.route('/create_folder', methods=['POST'])
-@login_required
 def create_folder():
     """Create a new folder in the records system"""
     try:

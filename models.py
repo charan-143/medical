@@ -239,11 +239,9 @@ class Document(db.Model):
             self.file_size = file_path.stat().st_size
             
             # Store the relative path for retrieval
-            rel_path = 'uploads'
-            if self.folder_id:
-                rel_path = f"{rel_path}/{self.folder_id}"
-            self.file_path = f"{rel_path}/{unique_filename}"
-            
+            # Store the relative path for retrieval
+            self.file_path = os.path.join('uploads', str(self.folder_id) if self.folder_id else '', unique_filename)
+            self.file_path = self.file_path.replace('\\', '/')
             # Ensure filename is set properly
             if not hasattr(self, 'filename') or not self.filename:
                 self.filename = unique_filename
@@ -266,10 +264,67 @@ class Document(db.Model):
         
     def get_url_path(self):
         """Return the URL path for the file"""
-        if not self.file_path:
+        try:
+            if not self.file_path:
+                return None
+                
+            # Ensure the file actually exists
+            file_path = self.get_file_path()
+            if not file_path or not file_path.exists():
+                current_app.logger.warning(f"File not found on disk: {self.file_path}")
+                return None
+                
+            # The file path is already relative to static directory, so just prepend '/static/'
+            url_path = '/static/' + self.file_path.replace('\\', '/')
+            current_app.logger.debug(f"Generated URL path for {self.filename}: {url_path}")
+            return url_path
+            
+        except Exception as e:
+            current_app.logger.error(f"Error generating URL path for {self.filename}: {str(e)}")
             return None
-        return f"/static/{self.file_path}"
-    
+    def get_file_info(self):
+        """Return a dict of file information for template display"""
+        return {
+            'id': self.id,
+            'filename': self.original_filename or 'Unknown',
+            'file_type': self.file_type or 'unknown',
+            'file_size': self.file_size or 0,
+            'upload_date': self.upload_date.strftime('%Y-%m-%d %H:%M:%S') if self.upload_date else 'Unknown',
+            'description': self.description or '',
+            'url_path': self.get_url_path() or '#',
+            'file_exists': self.get_file_path().exists() if self.get_file_path() else False
+        }
+
+    def validate_and_fix_path(self):
+        """Validate and fix the file path if needed"""
+        try:
+            if not self.file_path:
+                return False
+                
+            # Check if file exists
+            file_path = self.get_file_path()
+            if not file_path or not file_path.exists():
+                # Try to find the file in the static/uploads directory
+                base_dir = Path(current_app.root_path) / 'static' / 'uploads'
+                possible_locations = [
+                    base_dir / self.filename,  # Try root uploads directory
+                    base_dir / str(self.folder_id) / self.filename if self.folder_id else None  # Try folder
+                ]
+                
+                for location in possible_locations:
+                    if location and location.exists():
+                        # Update the file_path to match the actual location
+                        rel_path = location.relative_to(Path(current_app.root_path) / 'static')
+                        self.file_path = str(rel_path).replace('\\', '/')
+                        db.session.commit()
+                        current_app.logger.info(f"Fixed file path for {self.filename}")
+                        return True
+                return False
+            return True
+        except Exception as e:
+            current_app.logger.error(f"Error validating file path for {self.filename}: {str(e)}")
+            return False
+        
     def cleanup_folder(self):
         """Remove empty folder after file deletion"""
         if self.folder_id is None:
