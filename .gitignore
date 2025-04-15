@@ -46,3 +46,10 @@ migrations/versions/
 # Local development settings
 local_settings.py
 
+# Uploaded files
+static/uploads/*
+!static/uploads/.gitkeep
+
+# Temporary files
+*.tmp
+*.temp
