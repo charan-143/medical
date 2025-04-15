@@ -1,0 +1,48 @@
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Flask instance folder
+instance/
+
+# Logs
+*.log
+logs/
+debug.log
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Environment variables
+.env
+.flaskenv
+
+# Flask migration versions
+migrations/versions/
+
+# Local development settings
+local_settings.py
+

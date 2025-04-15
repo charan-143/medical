@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Medical Dashboard{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="px-4 py-5 my-5 text-center">
+        <h1 class="display-5 fw-bold">Medical Dashboard</h1>
+        <div class="col-lg-6 mx-auto">
+            <p class="lead mb-4">
+                Secure and efficient medical record management with AI-powered insights.
+            </p>
+            {% if not current_user.is_authenticated %}
+            <div class="d-grid gap-2 d-sm-flex justify-content-sm-center">
+                <a href="{{ url_for('auth.login') }}" class="btn btn-primary btn-lg px-4 gap-3">Login</a>
+                <a href="{{ url_for('auth.register') }}" class="btn btn-outline-secondary btn-lg px-4">Register</a>
+            </div>
+            {% else %}
+            <div class="d-grid gap-2 d-sm-flex justify-content-sm-center">
+                <a href="{{ url_for('dashboard.index') }}" class="btn btn-primary btn-lg px-4 gap-3">Go to Dashboard</a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="row g-4 py-5 row-cols-1 row-cols-lg-3">
+        <div class="col d-flex align-items-start">
+            <div class="icon-square text-body-emphasis bg-body-secondary d-inline-flex align-items-center justify-content-center fs-4 flex-shrink-0 me-3">
+                <i class="fas fa-folder-open"></i>
+            </div>
+            <div>
+                <h3 class="fs-2">Record Management</h3>
+                <p>Securely store and manage your medical records in one place.</p>
+            </div>
+        </div>
+        <div class="col d-flex align-items-start">
+            <div class="icon-square text-body-emphasis bg-body-secondary d-inline-flex align-items-center justify-content-center fs-4 flex-shrink-0 me-3">
+                <i class="fas fa-robot"></i>
+            </div>
+            <div>
+                <h3 class="fs-2">AI Assistant</h3>
+                <p>Get intelligent insights and analysis of your medical records.</p>
+            </div>
+        </div>
+        <div class="col d-flex align-items-start">
+            <div class="icon-square text-body-emphasis bg-body-secondary d-inline-flex align-items-center justify-content-center fs-4 flex-shrink-0 me-3">
+                <i class="fas fa-shield-alt"></i>
+            </div>
+            <div>
+                <h3 class="fs-2">Secure Storage</h3>
+                <p>Your data is encrypted and stored with the highest security standards.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

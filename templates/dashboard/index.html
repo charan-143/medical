@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Medical Dashboard{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h2 class="mb-4">Dashboard</h2>
+    
+    <!-- Welcome Card -->
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card shadow-sm mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Welcome back, {{ current_user.username }}!</h5>
+                    <p class="card-text">Here's an overview of your health metrics and recent activities.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Stats Row -->
+    <div class="row">
+        <div class="col-md-3">
+            <div class="card shadow-sm medical-card">
+                <div class="card-body text-center">
+                    <i class="fas fa-heartbeat fa-3x mb-3 text-danger"></i>
+                    <h5 class="card-title">Heart Rate</h5>
+                    <p class="card-text display-6">72 <span class="fs-6">BPM</span></p>
+                    <span class="badge bg-success">Normal</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card shadow-sm medical-card">
+                <div class="card-body text-center">
+                    <i class="fas fa-tint fa-3x mb-3 text-primary"></i>
+                    <h5 class="card-title">Blood Pressure</h5>
+                    <p class="card-text display-6">120/80</p>
+                    <span class="badge bg-success">Normal</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

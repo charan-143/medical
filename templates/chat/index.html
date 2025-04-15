@@ -1,0 +1,541 @@
+{% extends "base.html" %}
+
+{% block title %}AI Chat - Medical Dashboard{% endblock %}
+
+{% block styles %}
+<style>
+    .typing-indicator {
+        display: inline-flex;
+        align-items: center;
+    }
+    
+    .typing-indicator span {
+        background-color: #e2e3e5;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+        margin: 0 1px;
+        animation: typing 1.4s infinite ease-in-out;
+    }
+    
+    .typing-indicator span:nth-child(1) {
+        animation-delay: 0s;
+    }
+    
+    .typing-indicator span:nth-child(2) {
+        animation-delay: 0.2s;
+    }
+    
+    .typing-indicator span:nth-child(3) {
+        animation-delay: 0.4s;
+    }
+    
+    @keyframes typing {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.5); }
+        100% { transform: scale(1); }
+    }
+    
+    .ai-thinking {
+        display: none;
+        padding: 10px 15px;
+        background-color: #e2e3e5;
+        color: #383d41;
+        border-radius: 10px;
+        margin-bottom: 15px;
+        max-width: 75%;
+    }
+    
+    .recording-indicator {
+        color: #dc3545;
+        display: none;
+        animation: pulse 1.4s infinite ease-in-out;
+    }
+    
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+    }
+
+    .file-message {
+        display: flex;
+        align-items: center;
+        background-color: #f8f9fa;
+        border-radius: 5px;
+        padding: 8px;
+        margin-top: 5px;
+    }
+
+    .file-message i {
+        font-size: 1.5rem;
+        margin-right: 10px;
+    }
+
+    .file-message .file-info {
+        flex-grow: 1;
+    }
+
+    .file-message .file-name {
+        font-weight: bold;
+        margin-bottom: 0;
+    }
+
+    .file-message .file-size {
+        font-size: 0.8rem;
+        color: #6c757d;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h2 class="mb-4">AI Medical Assistant</h2>
+    
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card shadow-sm">
+                <div class="card-header">
+                    <h5 class="mb-0">Chat with AI</h5>
+                </div>
+                <div class="card-body">
+                    <div class="chat-container">
+                        <div class="chat-messages" id="chatMessages">
+                            <div class="message message-ai">
+                                <div class="message-content">
+                                    Hello! I'm your medical assistant. How can I help you today?
+                                </div>
+                                <span class="message-timestamp">{{ current_time }}</span>
+                            </div>
+                            
+                            <!-- Messages will be dynamically added here -->
+                            
+                            <div class="ai-thinking" id="aiThinking">
+                                <div class="typing-indicator">
+                                    <span></span>
+                                    <span></span>
+                                    <span></span>
+                                </div>
+                                <span class="ms-2">AI is thinking...</span>
+                            </div>
+                        </div>
+                        
+                        <form id="chatForm" class="mt-3">
+                            <div class="input-group mb-2">
+                                <input type="text" class="form-control chat-input" id="chatInput" placeholder="Type your message...">
+                                <button class="btn btn-primary" type="submit">
+                                    <i class="fas fa-paper-plane"></i>
+                                </button>
+                            </div>
+                            
+                            <div class="d-flex">
+                                <button type="button" class="btn btn-outline-secondary me-2" id="fileUploadBtn">
+                                    <i class="fas fa-file-upload"></i> Upload File
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" id="micButton">
+                                    <i class="fas fa-microphone"></i>
+                                    <span class="recording-indicator" id="recordingIndicator"> Recording...</span>
+                                </button>
+                                <input type="file" id="chatFileUpload" class="d-none" accept=".pdf,.png,.jpg,.jpeg">
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card shadow-sm mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Conversation History</h5>
+                </div>
+                <div class="card-body">
+                    <div class="list-group">
+                        <a href="#" class="list-group-item list-group-item-action">
+                            <div class="d-flex w-100 justify-content-between">
+                                <h6 class="mb-1">Heart Disease Symptoms</h6>
+                                <small>3 days ago</small>
+                            </div>
+                            <small>12 messages</small>
+                        </a>
+                        <a href="#" class="list-group-item list-group-item-action">
+                            <div class="d-flex w-100 justify-content-between">
+                                <h6 class="mb-1">Medication Interactions</h6>
+                                <small>1 week ago</small>
+                            </div>
+                            <small>8 messages</small>
+                        </a>
+                        <a href="#" class="list-group-item list-group-item-action">
+                            <div class="d-flex w-100 justify-content-between">
+                                <h6 class="mb-1">Diet Recommendations</h6>
+                                <small>2 weeks ago</small>
+                            </div>
+                            <small>15 messages</small>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card shadow-sm">
+                <div class="card-header">
+                    <h5 class="mb-0">Health Tips</h5>
+                </div>
+                <div class="card-body">
+                    <div id="healthTip" class="mb-3">
+                        <p><strong>Tip of the day:</strong> Regular exercise can help maintain healthy blood pressure levels.</p>
+                    </div>
+                    <button class="btn btn-sm btn-outline-primary" id="newTipBtn">New Tip</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Initialize socket connection
+        const socket = io();
+        
+        // DOM Elements
+        const chatForm = document.getElementById('chatForm');
+        const chatInput = document.getElementById('chatInput');
+        const chatMessages = document.getElementById('chatMessages');
+        const fileUploadBtn = document.getElementById('fileUploadBtn');
+        const fileInput = document.getElementById('chatFileUpload');
+        const micButton = document.getElementById('micButton');
+        const recordingIndicator = document.getElementById('recordingIndicator');
+        const aiThinking = document.getElementById('aiThinking');
+        const newTipBtn = document.getElementById('newTipBtn');
+        
+        // Voice recording variables
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        
+        // Connect to socket
+        socket.on('connect', () => {
+            console.log('Connected to chat server');
+            addSystemMessage('Connected to chat server.');
+        });
+        
+        // Disconnect from socket
+        socket.on('disconnect', () => {
+            console.log('Disconnected from chat server');
+            addSystemMessage('Disconnected from chat server.');
+        });
+        
+        // Receive message
+        socket.on('response', (data) => {
+            hideAIThinking();
+            addMessage(data.data, 'ai');
+            // Scroll to bottom of chat
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        });
+        
+        // Send message on form submit
+        if (chatForm) {
+            chatForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const message = chatInput.value.trim();
+                if (message) {
+                    // Add user message to chat
+                    addMessage(message, 'user');
+                    
+                    // Show AI thinking
+                    showAIThinking();
+                    
+                    // Send message to server
+                    socket.emit('message', { data: message });
+                    
+                    // Clear input
+                    chatInput.value = '';
+                }
+            });
+        }
+        
+        // File upload button click
+        if (fileUploadBtn && fileInput) {
+            fileUploadBtn.addEventListener('click', function(e) {
+                fileInput.click();
+            });
+            
+            fileInput.addEventListener('change', function(e) {
+                if (fileInput.files.length > 0) {
+                    handleFileUpload(fileInput.files[0]);
+                }
+            });
+        }
+        
+        // Microphone button click
+        if (micButton) {
+            micButton.addEventListener('click', function() {
+                if (!isRecording) {
+                    startRecording();
+                } else {
+                    stopRecording();
+                }
+            });
+        }
+        
+        // New health tip button
+        if (newTipBtn) {
+            newTipBtn.addEventListener('click', function() {
+                const healthTips = [
+                    'Stay hydrated by drinking at least 8 glasses of water daily.',
+                    'Aim for 7-9 hours of sleep each night for optimal health.',
+                    'Include a variety of colorful vegetables in your daily diet.',
+                    'Regular check-ups can help detect health issues early.',
+                    'Take short breaks when working at a computer to reduce eye strain.',
+                    'Walking for 30 minutes daily can improve cardiovascular health.'
+                ];
+                
+                const tipElement = document.getElementById('healthTip');
+                const randomTip = healthTips[Math.floor(Math.random() * healthTips.length)];
+                tipElement.innerHTML = `<p><strong>Tip of the day:</strong> ${randomTip}</p>`;
+            });
+        }
+        
+        // Function to add a message to the chat
+        function addMessage(message, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message message-${sender}`;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            
+            // Check if message contains file information (JSON string starting with {)
+            if (typeof message === 'string' && message.trim().startsWith('{') && message.trim().endsWith('}')) {
+                try {
+                    const fileData = JSON.parse(message);
+                    if (fileData.type === 'file') {
+                        // Create file message
+                        const fileElem = document.createElement('div');
+                        fileElem.className = 'file-message';
+                        
+                        // Icon based on file type
+                        const iconElem = document.createElement('i');
+                        if (fileData.fileType.includes('image')) {
+                            iconElem.className = 'fas fa-file-image';
+                        } else if (fileData.fileType.includes('pdf')) {
+                            iconElem.className = 'fas fa-file-pdf';
+                        } else {
+                            iconElem.className = 'fas fa-file';
+                        }
+                        
+                        // File info
+                        const infoDiv = document.createElement('div');
+                        infoDiv.className = 'file-info';
+                        
+                        const fileName = document.createElement('p');
+                        fileName.className = 'file-name';
+                        fileName.textContent = fileData.fileName;
+                        
+                        const fileSize = document.createElement('p');
+                        fileSize.className = 'file-size';
+                        fileSize.textContent = formatFileSize(fileData.fileSize);
+                        
+                        infoDiv.appendChild(fileName);
+                        infoDiv.appendChild(fileSize);
+                        
+                        fileElem.appendChild(iconElem);
+                        fileElem.appendChild(infoDiv);
+                        contentDiv.appendChild(fileElem);
+                    } else {
+                        contentDiv.textContent = message;
+                    }
+                } catch (e) {
+                    contentDiv.textContent = message;
+                }
+            } else {
+                contentDiv.textContent = message;
+            }
+            
+            const timestamp = document.createElement('span');
+            timestamp.className = 'message-timestamp';
+            const now = new Date();
+            timestamp.textContent = now.toLocaleTimeString();
+            
+            messageDiv.appendChild(contentDiv);
+            messageDiv.appendChild(timestamp);
+            
+            // Insert before the "AI is thinking" indicator
+            chatMessages.insertBefore(messageDiv, aiThinking);
+            
+            // Scroll to bottom
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Format file size
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' bytes';
+            else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            else return (bytes / 1048576).toFixed(1) + ' MB';
+        }
+        
+        // Function to show "AI is thinking"
+        function showAIThinking() {
+            aiThinking.style.display = 'block';
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Function to hide "AI is thinking"
+        function hideAIThinking() {
+            aiThinking.style.display = 'none';
+        }
+        
+        // Function to handle file uploads
+        function handleFileUpload(file) {
+            // Create form data
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            // Add message about the file
+            const fileData = {
+                type: 'file',
+                fileName: file.name,
+                fileSize: file.size,
+                fileType: file.type
+            };
+            
+            addMessage(JSON.stringify(fileData), 'user');
+            
+            // Show AI thinking
+            showAIThinking();
+            
+            // Upload the file to the server
+            fetch('/chat/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Hide AI thinking
+                hideAIThinking();
+                
+                // Add AI response
+                addMessage(`I've received your file: ${file.name}`, 'ai');
+                
+                // If analysis available, show it
+                if (data.analysis) {
+                    addMessage(data.analysis, 'ai');
+                }
+            })
+            .catch(error => {
+                console.error('Error uploading file:', error);
+                hideAIThinking();
+                addSystemMessage('Error uploading file. Please try again.');
+            });
+        }
+        
+        // Function to add a system message to the chat
+        function addSystemMessage(message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message message-system';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = message;
+            
+            messageDiv.appendChild(contentDiv);
+            
+            // Insert before the "AI is thinking" indicator
+            chatMessages.insertBefore(messageDiv, aiThinking);
+            
+            // Scroll to bottom
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Start audio recording
+        function startRecording() {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+                    
+                    mediaRecorder.addEventListener('dataavailable', event => {
+                        audioChunks.push(event.data);
+                    });
+                    
+                    mediaRecorder.addEventListener('stop', () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        processAudio(audioBlob);
+                    });
+                    
+                    mediaRecorder.start();
+                    isRecording = true;
+                    recordingIndicator.style.display = 'inline';
+                    micButton.innerHTML = '<i class="fas fa-stop"></i>';
+                })
+                .catch(error => {
+                    console.error('Error accessing microphone:', error);
+                    addSystemMessage('Unable to access microphone. Please check your settings.');
+                });
+            } else {
+                addSystemMessage('Your browser does not support audio recording.');
+            }
+        }
+        
+        // Stop audio recording
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+                recordingIndicator.style.display = 'none';
+                micButton.innerHTML = '<i class="fas fa-microphone"></i>';
+            }
+        }
+        
+        // Process audio recording
+        function processAudio(audioBlob) {
+            // Create form data
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.wav');
+            
+            // Show AI thinking
+            showAIThinking();
+            addSystemMessage('Processing your voice message...');
+            
+            // Send to server
+            fetch('/chat/transcribe', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.text) {
+                    // Add transcribed text message
+                    addMessage(data.text, 'user');
+                    
+                    // Send message to server
+                    socket.emit('message', { data: data.text });
+                } else {
+                    hideAIThinking();
+                    addSystemMessage('Could not transcribe audio. Please try again.');
+                }
+            })
+            .catch(error => {
+                console.error('Error transcribing audio:', error);
+                hideAIThinking();
+                addSystemMessage('Error processing audio. Please try again.');
+            });
+        }
+    });
+</script>
+{% endblock %}
