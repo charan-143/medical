@@ -578,31 +578,73 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Disable upload button and show progress
             uploadButton.disabled = true;
-            uploadButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Uploading...';
+            uploadButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Creating folder...';
             
-            // Create FormData for file upload
-            const formData = new FormData(uploadForm);
-            selectedFiles.forEach(file => {
-                formData.append('files[]', file);
-            });
+            // Get the parent folder ID (if we're in a subfolder)
+            const currentFolderId = document.getElementById('uploadFolderId').value.trim();
             
-            // Show progress indicators
-            overallProgressContainer.classList.remove('d-none');
-            const fileItems = document.querySelectorAll('.file-item');
-            fileItems.forEach(item => {
-                const progressDiv = item.querySelector('.file-progress');
-                if (progressDiv) progressDiv.classList.remove('d-none');
-            });
+            // Step 1: Create the folder first
+            const folderFormData = new FormData();
+            folderFormData.append('folder_name', folderName);
+            if (currentFolderId) {
+                folderFormData.append('parent_id', currentFolderId);
+            }
             
-            // Send the request
-            fetch(uploadForm.action, {
+            // Include CSRF token
+            const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+            
+            // Create the folder
+            fetch("{{ url_for('dashboard.create_folder_json') }}", {
                 method: 'POST',
-                body: formData
+                body: folderFormData,
+                headers: {
+                    'X-CSRFToken': csrfToken
+                }
+            })
+            .then(response => response.json())
+            .then(folderData => {
+                if (!folderData.success) {
+                    throw new Error(folderData.message || 'Failed to create folder');
+                }
+                
+                // Folder created successfully, now upload files to this folder
+                console.log('Folder created with ID:', folderData.folder_id);
+                showMessage(`Folder "${folderName}" created successfully. Uploading files...`, 'info');
+                
+                uploadButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Uploading files...';
+                
+                // Create FormData for file upload
+                const formData = new FormData(uploadForm);
+                
+                // Set the folder_id to the newly created folder
+                formData.set('folder_id', folderData.folder_id);
+                
+                // Add files
+                selectedFiles.forEach(file => {
+                    formData.append('files[]', file);
+                });
+                
+                // Show progress indicators
+                overallProgressContainer.classList.remove('d-none');
+                const fileItems = document.querySelectorAll('.file-item');
+                fileItems.forEach(item => {
+                    const progressDiv = item.querySelector('.file-progress');
+                    if (progressDiv) progressDiv.classList.remove('d-none');
+                });
+                
+                // Send the upload request with the folder ID
+                return fetch(uploadForm.action, {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-CSRFToken': csrfToken
+                    }
+                });
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    showMessage(data.message, 'success');
+                    showMessage(`Files uploaded successfully to folder "${folderName}"`, 'success');
                     selectedFiles = [];
                     updateFileList();
                     
