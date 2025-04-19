@@ -1,11 +1,13 @@
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, current_app
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, current_app, send_file, abort, make_response
 from flask_login import login_required, current_user
 from extensions import db
 from models import Folder, Document
 import os
 import uuid
 import logging
-from werkzeug.utils import secure_filename
+import mimetypes
+from pathlib import Path
+from werkzeug.utils import secure_filename, safe_join
 from datetime import datetime
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -464,6 +466,141 @@ def create_folder_json():
         response['message'] = f'Server error: {str(e)}'
         response['message'] = f'Server error: {str(e)}'
         return jsonify(response), 500
+
+# Utility functions for file handling
+def get_secure_file_path(document):
+    """
+    Securely construct and validate the file path for a document.
+    
+    Args:
+        document: Document model instance
+        
+    Returns:
+        Path object if valid, None if invalid
+    """
+    try:
+        # Get the base upload folder from config
+        upload_folder = current_app.config['UPLOAD_FOLDER']
+        
+        # Use the document's stored path to construct the full path
+        file_path = Path(safe_join(upload_folder, document.stored_filename))
+        
+        # Validate the path is within the upload folder
+        if not str(file_path.resolve()).startswith(str(Path(upload_folder).resolve())):
+            logger.warning(f"Attempted path traversal for document {document.id}")
+            return None
+            
+        return file_path
+    except Exception as e:
+        logger.error(f"Error constructing file path for document {document.id}: {str(e)}")
+        return None
+
+def get_content_type(file_path):
+    """
+    Determine the content type of a file based on its extension.
+    
+    Args:
+        file_path: Path object for the file
+        
+    Returns:
+        tuple of (content_type, is_previewable)
+    """
+    try:
+        # Map file extensions to MIME types
+        extension_map = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.pdf': 'application/pdf',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.xls': 'application/vnd.ms-excel',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        }
+        
+        # Get the file extension
+        ext = file_path.suffix.lower()
+        
+        # Try to get content type from our map first
+        content_type = extension_map.get(ext)
+        
+        # If not found, use mimetypes module as fallback
+        if not content_type:
+            content_type, _ = mimetypes.guess_type(str(file_path))
+            
+        # If still not found, use default binary type
+        if not content_type:
+            content_type = 'application/octet-stream'
+        
+        # Determine if the file type is previewable
+        is_previewable = ext in ['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.doc', '.docx', '.xls', '.xlsx']
+        
+        return content_type, is_previewable
+    except Exception as e:
+        logger.error(f"Error determining content type for {file_path}: {str(e)}")
+        return 'application/octet-stream', False
+
+@dashboard.route('/preview/<int:document_id>')
+@login_required
+def preview_document(document_id):
+    """
+    Secure route to preview a document.
+    
+    Args:
+        document_id: ID of the document to preview
+        
+    Returns:
+        File response with appropriate headers for preview
+    """
+    try:
+        # Get the document and verify ownership
+        document = Document.query.get_or_404(document_id)
+        if document.user_id != current_user.id:
+            logger.warning(f"User {current_user.id} attempted to access unauthorized document {document_id}")
+            abort(403)
+        
+        # Get and validate file path
+        file_path = get_secure_file_path(document)
+        if not file_path or not file_path.exists():
+            logger.error(f"File not found for document {document_id}")
+            abort(404)
+        
+        # Determine content type and previewability
+        content_type, is_previewable = get_content_type(file_path)
+        
+        if not is_previewable:
+            logger.info(f"Non-previewable file type {content_type} for document {document_id}")
+            return jsonify({
+                'success': False,
+                'message': 'This file type cannot be previewed'
+            }), 400
+        
+        # Prepare response with appropriate headers
+        response = make_response(send_file(
+            file_path,
+            mimetype=content_type,
+            as_attachment=False,
+            download_name=document.original_filename
+        ))
+        
+        # Set security headers
+        response.headers['Content-Security-Policy'] = "default-src 'self'"
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        
+        # Set cache control headers
+        response.headers['Cache-Control'] = 'no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        
+        # Log successful preview
+        logger.info(f"Successfully served preview for document {document_id} of type {content_type}")
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error previewing document {document_id}: {str(e)}", exc_info=True)
+        abort(500)
 
 @dashboard.after_request
 def after_request(response):

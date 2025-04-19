@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Bad Request - Medical Dashboard{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center align-items-center" style="min-height: 80vh;">
+        <div class="col-md-6 text-center">
+            <div class="error-template">
+                <h1 class="display-1 text-muted">400</h1>
+                <h2>Bad Request</h2>
+                <div class="error-details my-4">
+                    {% if error %}
+                        {{ error }}
+                    {% else %}
+                        Sorry, your request could not be processed due to invalid data.
+                    {% endif %}
+                </div>
+                <div class="error-actions">
+                    <a href="{{ url_for('index') }}" class="btn btn-primary">
+                        <i class="fas fa-home me-2"></i>Go Home
+                    </a>
+                    <a href="javascript:history.back()" class="btn btn-outline-secondary">
+                        <i class="fas fa-arrow-left me-2"></i>Go Back
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

@@ -8,29 +8,67 @@
         <div class="col-md-6">
             <div class="card shadow-sm">
                 <div class="card-header bg-primary text-white">
-                    <h4 class="mb-0">Create an Account</h4>
+                    <h4 class="mb-0">Create Account</h4>
                 </div>
                 <div class="card-body p-4">
-                    <form method="POST" action="{{ url_for('auth.register') }}">
-                        {{ form.hidden_tag() if form }}
-                        <div class="mb-3">
-                            <label for="username" class="form-label">Username</label>
-                            <input type="text" class="form-control" id="username" name="username" required>
+                    <form method="POST" action="{{ url_for('auth.register') }}" id="registerForm">
+                        {{ form.hidden_tag() }}
+                        {% if form.csrf_token.errors %}
+                        <div class="alert alert-danger">
+                            CSRF validation failed. Please try again.
                         </div>
+                        {% endif %}
+                        
                         <div class="mb-3">
-                            <label for="email" class="form-label">Email Address</label>
-                            <input type="email" class="form-control" id="email" name="email" required>
+                            {{ form.username.label(class="form-label") }}
+                            {{ form.username(class="form-control") }}
+                            {% if form.username.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.username.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
                         </div>
+                        
                         <div class="mb-3">
-                            <label for="password" class="form-label">Password</label>
-                            <input type="password" class="form-control" id="password" name="password" required>
+                            {{ form.email.label(class="form-label") }}
+                            {{ form.email(class="form-control") }}
+                            {% if form.email.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.email.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
                         </div>
+                        
                         <div class="mb-3">
-                            <label for="confirm_password" class="form-label">Confirm Password</label>
-                            <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+                            {{ form.password.label(class="form-label") }}
+                            {{ form.password(class="form-control") }}
+                            {% if form.password.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.password.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
                         </div>
+                        
+                        <div class="mb-3">
+                            {{ form.confirm_password.label(class="form-label") }}
+                            {{ form.confirm_password(class="form-control") }}
+                            {% if form.confirm_password.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.confirm_password.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
                         <div class="d-grid gap-2">
-                            <button type="submit" class="btn btn-primary">Register</button>
+                            {{ form.submit(class="btn btn-primary") }}
                         </div>
                     </form>
                 </div>
@@ -41,4 +79,86 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+    // Ensure CSRF token is included in all requests
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log('Register form script initialized');
+        
+        // Get the WTForms CSRF token field
+        const csrfTokenField = document.querySelector('input[name="csrf_token"]');
+        if (!csrfTokenField) {
+            console.error('CSRF token field not found in the form');
+            return;
+        }
+        
+        const csrfToken = csrfTokenField.value;
+        console.log('CSRF token available:', !!csrfToken);
+        console.log('CSRF token field attributes:', {
+            name: csrfTokenField.name,
+            id: csrfTokenField.id,
+            value: csrfTokenField.value ? `${csrfTokenField.value.substring(0, 5)}...` : 'empty',
+            type: csrfTokenField.type,
+            valueLength: csrfTokenField.value ? csrfTokenField.value.length : 0
+        });
+        
+        // Log the HTML of the CSRF token field
+        console.log('CSRF token field HTML:', csrfTokenField.outerHTML);
+        
+        // Setup AJAX requests to always include CSRF token
+        // This will handle any future AJAX requests from this page
+        const originalFetch = window.fetch;
+        window.fetch = function(url, options = {}) {
+            options = options || {};
+            options.headers = options.headers || {};
+            
+            // Add CSRF token to header for all requests
+            options.headers['X-CSRFToken'] = csrfToken;
+            
+            return originalFetch(url, options);
+        };
+        
+        // Add event listener to the form
+        const registerForm = document.getElementById('registerForm');
+        if (registerForm) {
+            console.log('Register form found, adding submit handler');
+            
+            registerForm.addEventListener('submit', function(event) {
+                // Log form submission attempt
+                console.log('Form submission initiated');
+                
+                // Debug CSRF token in form data
+                const formCsrfToken = this.querySelector('input[name="csrf_token"]');
+                console.log('Form data includes CSRF token:', !!formCsrfToken);
+                
+                if (formCsrfToken) {
+                    console.log('CSRF token in form at submission:', {
+                        value: formCsrfToken.value ? `${formCsrfToken.value.substring(0, 5)}...` : 'empty',
+                        length: formCsrfToken.value ? formCsrfToken.value.length : 0
+                    });
+                    
+                    // Verify token is not modified
+                    console.log('Token matches original:', formCsrfToken.value === csrfToken);
+                }
+                
+                // Create FormData to see exactly what will be sent
+                const formData = new FormData(this);
+                const formDataEntries = Array.from(formData.entries()).map(([key, value]) => {
+                    if (key === 'csrf_token') {
+                        return [key, value ? `${value.substring(0, 5)}...` : 'empty'];
+                    }
+                    return [key, typeof value === 'string' ? value : '[file]'];
+                });
+                console.log('Form data entries:', Object.fromEntries(formDataEntries));
+                
+                // Form will submit normally with the CSRF token included
+            });
+        } else {
+            console.error('Register form not found');
+        }
+    });
+</script>
 {% endblock %}

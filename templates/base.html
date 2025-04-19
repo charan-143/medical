@@ -138,10 +138,10 @@
                                     <i class="fas fa-cloud-upload-alt fa-3x mb-3 text-primary"></i>
                                     <h5>Drag & Drop Files Here</h5>
                                     <p class="text-muted mb-3">or</p>
-                                    <label for="recordFiles" class="btn btn-outline-primary">
-                                        Browse Files
+                                    <label for="recordFiles" class="btn btn-outline-primary browse-btn">
+                                        <i class="fas fa-folder-open me-2"></i>Browse Files
                                     </label>
-                                    <input type="file" class="d-none" id="recordFiles" name="files[]" multiple>
+                                    <input type="file" id="recordFiles" name="files[]" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display:none;">
                                     <p class="mt-2 small text-muted">Upload multiple files (max 10MB each)</p>
                                 </div>
                             </div>
@@ -192,13 +192,14 @@
         const createFolderUrl = "{{ url_for('dashboard.create_folder_json') }}";
         const uploadFilesUrl = "{{ url_for('dashboard.upload_json') }}";
     document.addEventListener('DOMContentLoaded', function() {
+        console.debug('[DEBUG] Upload module initialized');
         // Basic modal setup and debugging
         const uploadModal = document.getElementById('uploadModal');
         if (uploadModal) {
             console.log('Modal element found, letting Bootstrap handle modal behavior');
             
             // Let Bootstrap's data-api handle modal functionality
-            // Only add one show event listener for debugging
+            // Add event listeners for modal events
             uploadModal.addEventListener('show.bs.modal', function(event) {
                 console.log('Modal is being shown');
                 
@@ -208,8 +209,32 @@
                 document.getElementById('description').value = '';
                 selectedFiles = [];
                 updateFileList();
+                
+                // Reset file input element to ensure clean state
+                resetFileInput();
             });
-        }
+            
+            // Add a hidden event listener to clean up
+            uploadModal.addEventListener('hidden.bs.modal', function(event) {
+                console.log('Modal was hidden, cleaning up');
+                // Clean up file input and any selected files
+                resetFileInput();
+                
+                // Additional cleanup to ensure no file references persist
+                selectedFiles = [];
+                updateFileList();
+                
+                // Clear any messages
+                uploadMessages.classList.add('d-none');
+                
+                // Reset progress indicators
+                overallProgressContainer.classList.add('d-none');
+                overallProgressBar.style.width = '0%';
+                overallProgressBar.setAttribute('aria-valuenow', 0);
+                overallProgressPercent.textContent = '0%';
+                
+                console.log('Modal cleanup completed');
+            });
         
         
         // Elements
@@ -279,20 +304,76 @@
             handleFiles(files);
         }
         
+        // Function to simply reset the file input element
+        function resetFileInput() {
+            console.debug('[DEBUG] Resetting file input');
+            try {
+                const fileInput = document.getElementById('recordFiles');
+                if (fileInput) {
+                    // Just reset the value - this works in most modern browsers
+                    fileInput.value = '';
+                    
+                    // Reset selected files and UI
+                    selectedFiles = [];
+                    updateFileList();
+                    uploadButton.disabled = true;
+                    console.log('File input element has been reset');
+                }
+                return true;
+            } catch (error) {
+                console.error('Error resetting file input:', error);
+                return false;
+            }
+        }
+        
+        // Add click handler for the browse button label
+        document.querySelector('label.browse-btn').addEventListener('click', function(e) {
+            console.debug('[DEBUG] Browse button clicked');
+            // The click event should propagate to the input naturally,
+            // but we can explicitly trigger it to ensure it works
+            const fileInput = document.getElementById('recordFiles');
+            if (fileInput) {
+                fileInput.click();
+            }
+        });
+        
         // Handle files from file input
-        fileInput.addEventListener('change', function() {
+        fileInput.addEventListener('change', function(e) {
+            // Log the event to help debugging
+            console.log('File input change event triggered');
+            console.debug('[DEBUG] File input change detected', {
+                filesCount: this.files?.length || 0,
+                inputId: this.id,
+                inputType: this.type,
+                timeStamp: new Date().toISOString()
+            });
+            // Prevent any browser-specific issues by stopping propagation
+            e.stopPropagation();
+            
             if (this.files && this.files.length > 0) {
                 console.log('Files selected via input:', this.files.length);
+                
+                // Clear any previous file identifiers from display
+                const fileNames = Array.from(this.files).map(f => f.name).join(', ');
+                console.log('Selected files:', fileNames);
+                
                 handleFiles(this.files);
                 
                 // Force enable upload button if files are selected
                 if (this.files.length > 0) {
                     uploadButton.disabled = false;
                 }
+            } else {
+                // Handle the case where no files were selected (dialog canceled)
+                console.log('No files selected or dialog canceled');
             }
         });
-        // Process selected files
         function handleFiles(files) {
+            console.debug('[DEBUG] handleFiles called', {
+                filesCount: files?.length || 0,
+                timeStamp: new Date().toISOString()
+            });
+            
             if (!files || !files.length) {
                 console.log('No files to process');
                 return;
@@ -463,9 +544,11 @@
             updateFileList();
             showMessage('All files removed', 'info');
         });
-        
         // Force check upload button state initially
         uploadButton.disabled = selectedFiles.length === 0;
+        
+        // Clean up any existing file input state on page load
+        resetFileInput();
         
         // Make sure upload button is enabled when files are selected
         function updateUploadButtonState() {
@@ -518,8 +601,7 @@
                 // Create folder via AJAX
                 const folderFormData = new FormData();
                 folderFormData.append('folder_name', folderName);
-                folderFormData.append('parent_id', ''); // Root level
-                
+                console.debug('[DEBUG] Creating folder', { folderName });
                 const response = await fetch(createFolderUrl, {
                     method: 'POST',
                     body: folderFormData,
@@ -557,6 +639,10 @@
         
         // Function to upload files to the folder
         function uploadFilesToFolder(folderId) {
+            console.debug('[DEBUG] Starting file upload to folder', { 
+                folderId, 
+                fileCount: selectedFiles.length 
+            });
             // Prepare FormData for file upload
             const formData = new FormData();
             
@@ -608,6 +694,7 @@
             });
             
             // Handle response
+            // Handle response
             xhr.onload = function() {
                 uploadButton.disabled = false;
                 uploadButton.innerHTML = 'Upload Files';
@@ -634,9 +721,11 @@
                             setTimeout(() => {
                                 const uploadModal = bootstrap.Modal.getInstance(document.getElementById('uploadModal'));
                                 if (uploadModal) {
+                                    // Reset file input before hiding
+                                    resetFileInput();
                                     uploadModal.hide();
                                 }
-                            }, 1500);
+                            }, 2000);
                         } else {
                             showMessage('Upload failed: ' + response.message, 'danger');
                         }
@@ -657,7 +746,6 @@
                 showMessage('Network error occurred during upload', 'danger');
                 console.error('Network error during file upload');
             };
-            
             // Add timeout handler
             xhr.ontimeout = function() {
                 uploadButton.disabled = false;
@@ -677,7 +765,7 @@
             xhr.send(formData);
         }
         
-        // For debugging - show more detailed error messages
+        // Handle upload errors with cleaner code
         function handleUploadError(xhr) {
             let errorMessage = 'Upload failed';
             
@@ -685,22 +773,29 @@
                 const response = JSON.parse(xhr.responseText);
                 errorMessage = response.message || 'Unknown error';
             } catch (e) {
-                if (xhr.status === 413) {
-                    errorMessage = 'File too large. Maximum size is 10MB per file.';
-                } else if (xhr.status === 500) {
-                    errorMessage = 'Server error. Please try again later.';
-                } else if (xhr.status === 400) {
-                    errorMessage = 'Invalid request. Please check your files.';
-                } else {
-                    errorMessage = `Error (${xhr.status}): ${xhr.statusText || 'Unknown error'}`;
-                }
+                errorMessage = getErrorMessageForStatus(xhr.status);
             }
             
             // Display error message
             showMessage(errorMessage, 'danger');
             console.error('Upload error:', errorMessage);
             
-            // Reset progress UI
+            // Reset UI elements
+            resetUploadUI();
+        }
+        
+        // Get appropriate error message based on status code
+        function getErrorMessageForStatus(status) {
+            const errorMessages = {
+                413: 'File too large. Maximum size is 10MB per file.',
+                500: 'Server error. Please try again later.',
+                400: 'Invalid request. Please check your files.',
+            };
+            return errorMessages[status] || `Error (${status}): Unknown error`;
+        }
+        
+        // Reset UI elements after an error
+        function resetUploadUI() {
             overallProgressContainer.classList.add('d-none');
             const fileItems = document.querySelectorAll('.file-item');
             fileItems.forEach(item => {
@@ -710,9 +805,22 @@
         }
         }
         
+        
         const style = document.createElement('style');
         style.textContent = `
-            /* Modal debugging styles */
+            /* Enhanced browse button styles */
+            .browse-btn {
+                position: relative;
+                z-index: 2;
+                padding: 0.5rem 1.5rem;
+                font-weight: 500;
+                transition: all 0.3s ease;
+            }
+            
+            .browse-btn:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            }
             /* CSS Variable Definitions */
             :root {
                 --border-color: #dee2e6;
@@ -783,8 +891,15 @@
         document.head.appendChild(style);
         
         // Log initialization completed
+        // Log initialization completed
         console.log('Upload form initialization completed');
-    });
+        
+        // Verify file input setup
+        console.debug('[DEBUG] File input configuration', {
+            inputElement: document.getElementById('recordFiles') ? 'Found' : 'Missing',
+            labelElement: document.querySelector('label[for="recordFiles"]') ? 'Found' : 'Missing',
+            browserSupport: !!window.FileReader ? 'Supported' : 'Not supported'
+        });
     </script>
     {% endif %}
     {% endblock scripts %}
