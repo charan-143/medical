@@ -12,21 +12,35 @@
                 </div>
                 <div class="card-body p-4">
                     <form method="POST" action="{{ url_for('auth.login') }}">
-                        {{ form.hidden_tag() if form }}
+                        {{ form.hidden_tag() }}
                         <div class="mb-3">
-                            <label for="email" class="form-label">Email Address</label>
-                            <input type="email" class="form-control" id="email" name="email" required>
+                            {{ form.email.label(class="form-label") }}
+                            {{ form.email(class="form-control") }}
+                            {% if form.email.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.email.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
                         </div>
                         <div class="mb-3">
-                            <label for="password" class="form-label">Password</label>
-                            <input type="password" class="form-control" id="password" name="password" required>
+                            {{ form.password.label(class="form-label") }}
+                            {{ form.password(class="form-control") }}
+                            {% if form.password.errors %}
+                                <div class="text-danger">
+                                    {% for error in form.password.errors %}
+                                        <small>{{ error }}</small>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
                         </div>
                         <div class="mb-3 form-check">
-                            <input type="checkbox" class="form-check-input" id="remember" name="remember">
-                            <label class="form-check-label" for="remember">Remember me</label>
+                            {{ form.remember(class="form-check-input") }}
+                            {{ form.remember.label(class="form-check-label") }}
                         </div>
                         <div class="d-grid gap-2">
-                            <button type="submit" class="btn btn-primary">Login</button>
+                            {{ form.submit(class="btn btn-primary") }}
                         </div>
                     </form>
                 </div>
@@ -37,4 +51,32 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+    // Ensure CSRF token is included in all AJAX requests
+    document.addEventListener('DOMContentLoaded', function() {
+        // Get CSRF token value
+        const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+        
+        // Setup AJAX requests to always include CSRF token
+        // This will handle any future AJAX requests from this page
+        const originalFetch = window.fetch;
+        window.fetch = function(url, options = {}) {
+            options = options || {};
+            options.headers = options.headers || {};
+            
+            // Add CSRF token to header for POST, PUT, DELETE, PATCH requests
+            if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(options.method?.toUpperCase())) {
+                options.headers['X-CSRFToken'] = csrfToken;
+            }
+            
+            return originalFetch(url, options);
+        };
+        
+        // No need to handle regular form submission, already has the CSRF token
+    });
+</script>
 {% endblock %}
