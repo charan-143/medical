@@ -1,6 +1,43 @@
 {% extends "base.html" %} {% block title %}Medical Records - Medical Dashboard{%
 endblock %} {% block styles %} {{ super() }}
 <style>
+	/* Tab styling for subfolder navigation */
+	.folder-tabs .nav-link {
+		color: #495057;
+		font-weight: 500;
+		border: none;
+		border-bottom: 2px solid transparent;
+		padding: 0.75rem 1rem;
+		transition: all 0.2s ease;
+	}
+
+	.folder-tabs .nav-link.active {
+		color: #4361ee;
+		background-color: transparent;
+		border-bottom: 2px solid #4361ee;
+	}
+
+	.folder-tabs .nav-link:hover:not(.active) {
+		border-bottom: 2px solid #dee2e6;
+	}
+
+	/* AI content section */
+	.ai-content {
+		background-color: #f8f9fa;
+		border-radius: 0.5rem;
+		padding: 1.5rem;
+		border: 1px solid #dee2e6;
+	}
+
+	.ai-content h3 {
+		color: #4361ee;
+		margin-bottom: 1rem;
+		font-size: 1.25rem;
+	}
+
+	.ai-content .text-section {
+		margin-bottom: 1.5rem;
+	}
 	/* Grid layout for files and folders */
 	.folder-container {
 		display: grid;
@@ -311,9 +348,29 @@ endblock %} {% block styles %} {{ super() }}
 					<h5 class="mb-0">
 						{{ current_folder.name if current_folder else 'All Records' }}
 					</h5>
+					{% if current_folder %}
+					<!-- Tabs for the subfolder view -->
+					<ul class="nav nav-tabs folder-tabs mt-3" id="folderTabs" role="tablist">
+						<li class="nav-item" role="presentation">
+							<button class="nav-link active" id="files-tab" data-bs-toggle="tab" data-bs-target="#files-tab-pane" type="button" role="tab" aria-controls="files-tab-pane" aria-selected="true">
+								<i class="fas fa-file me-2"></i>Files
+							</button>
+						</li>
+						<li class="nav-item" role="presentation">
+							<button class="nav-link" id="ai-text-tab" data-bs-toggle="tab" data-bs-target="#ai-text-tab-pane" type="button" role="tab" aria-controls="ai-text-tab-pane" aria-selected="false">
+								<i class="fas fa-robot me-2"></i>AI Generated Text
+							</button>
+						</li>
+					</ul>
+					{% endif %}
 				</div>
 				<div class="card-body">
-					{% if subfolders or documents %}
+					{% if current_folder %}
+					<!-- Tab content for subfolder view -->
+					<div class="tab-content" id="folderTabsContent">
+						<!-- Files tab -->
+						<div class="tab-pane fade show active" id="files-tab-pane" role="tabpanel" aria-labelledby="files-tab" tabindex="0">
+							{% if subfolders or documents %}
 					<!-- Folders Section -->
 					{% if subfolders %}
 					<div class="mb-4">
@@ -409,6 +466,134 @@ endblock %} {% block styles %} {{ super() }}
 							<i class="fas fa-upload me-2"></i> Upload Files
 						</button>
 					</div>
+							{% endif %}
+						</div>
+						
+						<!-- AI Generated Text tab -->
+						<div class="tab-pane fade" id="ai-text-tab-pane" role="tabpanel" aria-labelledby="ai-text-tab" tabindex="0">
+							<div class="ai-content">
+								<h3>AI Analysis</h3>
+								<div class="text-section">
+									<h5>Summary</h5>
+									<p>This is a placeholder for AI-generated summary of the medical records in this folder. The AI can analyze the documents and provide insights about the medical information contained in them.</p>
+								</div>
+								
+								<div class="text-section">
+									<h5>Key Findings</h5>
+									<ul class="mb-4">
+										<li>This is a placeholder for an AI-generated finding</li>
+										<li>Another placeholder for AI-identified information</li>
+										<li>Additional placeholder for relevant medical information</li>
+									</ul>
+								</div>
+								
+								<div class="text-section">
+									<h5>Recommendations</h5>
+									<p>Placeholder for AI-generated recommendations based on the analysis of the medical records in this folder.</p>
+								</div>
+							</div>
+						</div>
+					</div>
+					{% else %}
+					<!-- Regular display for root folder -->
+					{% if subfolders or documents %}
+					<!-- Folders Section -->
+					{% if subfolders %}
+					<div class="mb-4">
+						<h6 class="text-muted mb-3">Folders</h6>
+						<div class="folder-container">
+							{% for folder in subfolders %}
+							<div class="folder-link">
+								<a
+									href="{{ url_for('dashboard.records', folder_id=folder.id) }}"
+									class="text-decoration-none w-100"
+								>
+									<div class="folder-item">
+										<div class="folder-icon">
+											<i class="fas fa-folder"></i>
+										</div>
+										<div class="folder-name">{{ folder.name }}</div>
+									</div>
+								</a>
+							</div>
+							{% endfor %}
+						</div>
+					</div>
+					{% endif %}
+
+					<!-- Files Section -->
+					{% if documents %}
+					<div>
+						<h6 class="text-muted mb-3">Files</h6>
+						<div class="folder-container">
+							{% for document in documents %} {% set info =
+							document.get_file_info() %}
+							<div class="file-item-wrapper">
+								<div
+									class="file-item"
+									data-file-path="{{ info.url_path }}"
+									data-filename="{{ info.filename }}"
+									data-file-type="{{ info.file_type }}"
+									data-file-size="{{ info.file_size }}"
+									data-upload-date="{{ info.upload_date }}"
+									data-description="{{ info.description }}"
+									data-document-id="{{ document.id }}"
+								>
+									<div class="file-icon">
+										{% set file_type = info.file_type.lower() %} {% if file_type
+										in ['jpg', 'jpeg', 'png', 'gif'] %}
+										<i class="fas fa-file-image"></i>
+										{% elif file_type == 'pdf' %}
+										<i class="fas fa-file-pdf"></i>
+										{% elif file_type in ['doc', 'docx'] %}
+										<i class="fas fa-file-word"></i>
+										{% elif file_type in ['xls', 'xlsx'] %}
+										<i class="fas fa-file-excel"></i>
+										{% else %}
+										<i class="fas fa-file"></i>
+										{% endif %}
+									</div>
+									<div class="file-name">{{ info.filename }}</div>
+									<div class="file-actions">
+										<button
+											class="btn btn-sm btn-outline-secondary me-1 view-file-btn"
+											type="button"
+										>
+											<i class="fas fa-eye"></i>
+										</button>
+										<a
+											href="{{ info.url_path }}"
+											download="{{ info.filename }}"
+											class="btn btn-sm btn-outline-primary"
+										>
+											<i class="fas fa-download"></i>
+										</a>
+									</div>
+								</div>
+							</div>
+							{% endfor %}
+						</div>
+					</div>
+					{% endif %} 
+					{% else %}
+					<!-- Empty State -->
+					<div class="text-center py-5">
+						<div class="mb-3">
+							<i class="fas fa-folder-open fa-4x text-muted"></i>
+						</div>
+						<h5>This folder is empty</h5>
+						<p class="text-muted">
+							Upload files or create folders to organize your medical records.
+						</p>
+						<button
+							class="btn btn-primary mt-3"
+							data-bs-toggle="modal"
+							data-bs-target="#uploadModal"
+						>
+							<i class="fas fa-upload me-2"></i> Upload Files
+						</button>
+					</div>
+					{% endif %}
 					{% endif %}
 				</div>
 			</div>
