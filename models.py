@@ -173,17 +173,29 @@ class Document(db.Model):
             raise RuntimeError("No application context")
             
         base_upload_dir = Path(current_app.root_path) / 'static' / 'uploads'
-        if self.folder_id is not None:
-            return base_upload_dir / str(self.folder_id)
+        if self.folder_id is not None and self.folder_id != 0:
+            # Ensure we have a string folder id and create a subfolder
+            folder_path = base_upload_dir / str(self.folder_id)
+            return folder_path
         return base_upload_dir
     
     def ensure_folder_exists(self):
         """Ensure the upload folder exists and is accessible"""
         folder_path = self.get_folder_path()
         try:
+            # Create the folder if it doesn't exist
             folder_path.mkdir(parents=True, exist_ok=True)
+            
+            # Log successful folder creation/verification
+            current_app.logger.debug(f"Ensured folder exists: {folder_path}")
+            
+            # Check write permissions
+            if not os.access(folder_path, os.W_OK):
+                raise OSError(f"No write permission to folder: {folder_path}")
+                
             return True
         except OSError as e:
+            current_app.logger.error(f"Could not create/access folder: {folder_path}, error: {str(e)}")
             raise OSError(f"Could not create folder structure: {str(e)}")
     
     def save_file(self, file):
@@ -240,13 +252,25 @@ class Document(db.Model):
             
             # Store the relative path for retrieval
             # Store the relative path for retrieval
-            self.file_path = os.path.join('uploads', str(self.folder_id) if self.folder_id else '', unique_filename)
-            self.file_path = self.file_path.replace('\\', '/')
+            # Generate a consistent path that matches the actual file location
+            if self.folder_id is not None and self.folder_id != 0:
+                # If a folder is specified, include it in the path
+                rel_path = f"uploads/{self.folder_id}/{unique_filename}"
+            else:
+                # Otherwise, store directly in uploads folder
+                rel_path = f"uploads/{unique_filename}"
+                
+            # Store the path with forward slashes for consistency
+            self.file_path = rel_path
+            
             # Ensure filename is set properly
             if not hasattr(self, 'filename') or not self.filename:
                 self.filename = unique_filename
-            return self
+                
+            # Log the file path for debugging
+            current_app.logger.debug(f"File saved at: {file_path}, stored path: {self.file_path}")
             
+            return self
         except Exception as e:
             # Clean up any file that may have been partially saved
             self.cleanup_failed_upload(str(file_path))
@@ -260,7 +284,12 @@ class Document(db.Model):
             return None
             
         # Use the stored file_path to determine the actual file location
-        return Path(current_app.root_path) / 'static' / self.file_path
+        full_path = Path(current_app.root_path) / 'static' / self.file_path
+        
+        # Debug log to help troubleshoot path issues
+        current_app.logger.debug(f"Full file path for {self.original_filename}: {full_path}")
+        
+        return full_path
         
     def get_url_path(self):
         """Return the URL path for the file"""
@@ -299,28 +328,45 @@ class Document(db.Model):
         """Validate and fix the file path if needed"""
         try:
             if not self.file_path:
+                current_app.logger.warning(f"No file_path for document {self.id}")
                 return False
                 
-            # Check if file exists
+            # Check if file exists at the stored path
             file_path = self.get_file_path()
-            if not file_path or not file_path.exists():
-                # Try to find the file in the static/uploads directory
-                base_dir = Path(current_app.root_path) / 'static' / 'uploads'
-                possible_locations = [
-                    base_dir / self.filename,  # Try root uploads directory
-                    base_dir / str(self.folder_id) / self.filename if self.folder_id else None  # Try folder
-                ]
+            if file_path and file_path.exists():
+                current_app.logger.debug(f"File found at expected path: {file_path}")
+                return True
                 
-                for location in possible_locations:
-                    if location and location.exists():
-                        # Update the file_path to match the actual location
-                        rel_path = location.relative_to(Path(current_app.root_path) / 'static')
-                        self.file_path = str(rel_path).replace('\\', '/')
-                        db.session.commit()
-                        current_app.logger.info(f"Fixed file path for {self.filename}")
-                        return True
-                return False
-            return True
+            # If file not found, try to find it in possible locations
+            current_app.logger.warning(f"File not found at {file_path}, searching for alternatives")
+            base_dir = Path(current_app.root_path) / 'static' / 'uploads'
+            
+            # Create a list of possible locations to search
+            possible_locations = []
+            
+            # Check in root uploads directory
+            possible_locations.append(base_dir / self.filename)
+            
+            # Check in folder-specific directory if folder_id exists
+            if self.folder_id is not None and self.folder_id != 0:
+                possible_locations.append(base_dir / str(self.folder_id) / self.filename)
+            
+            # Log all possible locations we're checking
+            current_app.logger.debug(f"Searching for {self.filename} in: {possible_locations}")
+            
+            # Check each location
+            for location in possible_locations:
+                if location and location.exists():
+                    # Update the file_path to match the actual location
+                    rel_path = location.relative_to(Path(current_app.root_path) / 'static')
+                    self.file_path = str(rel_path).replace('\\', '/')
+                    db.session.commit()
+                    current_app.logger.info(f"Fixed file path for {self.filename}: {self.file_path}")
+                    return True
+                    
+            # If we couldn't find the file, log this
+            current_app.logger.error(f"Could not find file {self.filename} in any expected location")
+            return False
         except Exception as e:
             current_app.logger.error(f"Error validating file path for {self.filename}: {str(e)}")
             return False

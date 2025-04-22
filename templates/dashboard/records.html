@@ -714,7 +714,6 @@ function showMessage(message, type = 'info') {
     document.body.appendChild(alertDiv);
     setTimeout(() => alertDiv.remove(), 5000);
 }
-
 // Function to handle file uploads
 function uploadFiles() {
     if (selectedFiles.length === 0) {
@@ -732,16 +731,43 @@ function uploadFiles() {
     
     formData.append('csrf_token', csrfToken.value);
 
-    // Add folder ID if present
-    const folderId = document.getElementById('uploadFolderId');
-    if (folderId && folderId.value) {
-        formData.append('folder_id', folderId.value);
+    // Check if we need to create a new folder
+    const newFolderName = document.getElementById('createFolder').value.trim();
+    if (newFolderName) {
+        // Need to create a folder first, then upload to it
+        createNewFolder(newFolderName)
+            .then(folderId => {
+                if (folderId) {
+                    uploadFilesToFolder(folderId);
+                } else {
+                    showMessage('Failed to create folder. Files will be uploaded to current location.', 'warning');
+                    proceedWithUpload();
+                }
+            })
+            .catch(error => {
+                showMessage('Error creating folder: ' + error.message, 'danger');
+                console.error('Folder creation error:', error);
+            });
+    } else {
+        // Just upload to current folder
+        proceedWithUpload();
     }
 
-    // Add files to form data
-    selectedFiles.forEach(file => {
-        formData.append('files[]', file);
-    });
+    // Inner function to handle the actual upload
+    function proceedWithUpload() {
+        // Add folder ID if present
+        const folderId = document.getElementById('uploadFolderId');
+        if (folderId && folderId.value) {
+            console.log('Using folder ID:', folderId.value);
+            formData.append('folder_id', folderId.value);
+        } else {
+            console.log('No folder ID specified, uploading to root');
+        }
+
+        // Add files to form data
+        selectedFiles.forEach(file => {
+            formData.append('files[]', file);
+        });
 
     // Update UI elements
     const uploadButton = document.getElementById('uploadButton');
@@ -752,29 +778,69 @@ function uploadFiles() {
     uploadButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading...';
     progressContainer.classList.remove('d-none');
 
-    // Send upload request
-    const uploadForm = document.getElementById('uploadForm');
-    fetch(uploadForm.action, {
+        // Send upload request
+        const uploadForm = document.getElementById('uploadForm');
+        console.log('Uploading files...');
+        fetch(uploadForm.action, {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showMessage('Upload successful', 'success');
+                setTimeout(() => window.location.reload(), 1500);
+            } else {
+                throw new Error(data.message || 'Upload failed');
+            }
+        })
+        .catch(error => {
+            showMessage(error.message, 'danger');
+            console.error('Upload error:', error);
+        })
+        .finally(() => {
+            uploadButton.disabled = false;
+            uploadButton.innerHTML = 'Upload Files';
+            progressContainer.classList.add('d-none');
+        });
+    }
+
+    // Function to upload files to a specific folder
+    function uploadFilesToFolder(folderId) {
+        // Update the folder ID in the form
+        document.getElementById('uploadFolderId').value = folderId;
+        console.log('Setting folder ID to:', folderId);
+        proceedWithUpload();
+    }
+}
+
+// Function to create a new folder
+function createNewFolder(folderName) {
+    console.log('Creating folder:', folderName);
+    const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+    const currentFolderId = document.getElementById('uploadFolderId').value;
+    
+    const formData = new FormData();
+    formData.append('csrf_token', csrfToken);
+    formData.append('folder_name', folderName);
+    
+    // Set parent_id to current folder if we're in a subfolder
+    if (currentFolderId) {
+        formData.append('parent_id', currentFolderId);
+    }
+    
+    return fetch('/dashboard/create_folder_json', {
         method: 'POST',
         body: formData
     })
     .then(response => response.json())
     .then(data => {
-        if (data.success) {
-            showMessage('Upload successful', 'success');
-            setTimeout(() => window.location.reload(), 1500);
+        if (data.success && data.folder_id) {
+            showMessage(`Folder "${folderName}" created successfully`, 'success');
+            return data.folder_id;
         } else {
-            throw new Error(data.message || 'Upload failed');
+            throw new Error(data.message || 'Failed to create folder');
         }
-    })
-    .catch(error => {
-        showMessage(error.message, 'danger');
-        console.error('Upload error:', error);
-    })
-    .finally(() => {
-        uploadButton.disabled = false;
-        uploadButton.innerHTML = 'Upload Files';
-        progressContainer.classList.add('d-none');
     });
 }
 </script>
