@@ -1,541 +1,1239 @@
-{% extends "base.html" %}
-
-{% block title %}AI Chat - Medical Dashboard{% endblock %}
-
-{% block styles %}
+{% extends "base.html" %} {% block title %}AI Chat - Medical Dashboard{%
+endblock %} {% block styles %}
 <style>
-    .typing-indicator {
-        display: inline-flex;
-        align-items: center;
-    }
-    
-    .typing-indicator span {
-        background-color: #e2e3e5;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        display: inline-block;
-        margin: 0 1px;
-        animation: typing 1.4s infinite ease-in-out;
-    }
-    
-    .typing-indicator span:nth-child(1) {
-        animation-delay: 0s;
-    }
-    
-    .typing-indicator span:nth-child(2) {
-        animation-delay: 0.2s;
-    }
-    
-    .typing-indicator span:nth-child(3) {
-        animation-delay: 0.4s;
-    }
-    
-    @keyframes typing {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.5); }
-        100% { transform: scale(1); }
-    }
-    
-    .ai-thinking {
-        display: none;
-        padding: 10px 15px;
-        background-color: #e2e3e5;
-        color: #383d41;
-        border-radius: 10px;
-        margin-bottom: 15px;
-        max-width: 75%;
-    }
-    
-    .recording-indicator {
-        color: #dc3545;
-        display: none;
-        animation: pulse 1.4s infinite ease-in-out;
-    }
-    
-    @keyframes pulse {
-        0% { opacity: 1; }
-        50% { opacity: 0.5; }
-        100% { opacity: 1; }
-    }
+	/* Color variables for Gemini-like appearance */
+	:root {
+		/* Message Colors */
+		--ai-bubble-bg: #f8f9fa;
+		--user-bubble-bg: #e8f0fe;
+		--user-bubble-border: #1a73e8;
 
-    .file-message {
-        display: flex;
-        align-items: center;
-        background-color: #f8f9fa;
-        border-radius: 5px;
-        padding: 8px;
-        margin-top: 5px;
-    }
+		/* Input Colors */
+		--input-bg: #ffffff;
+		--input-border: #dadce0;
+		--input-hover-border: #9aa0a6;
+		--input-focus-border: #1a73e8;
 
-    .file-message i {
-        font-size: 1.5rem;
-        margin-right: 10px;
-    }
+		/* Interactive Elements */
+		--send-button-color: #1a73e8;
+		--typing-indicator-bg: #f1f3f4;
 
-    .file-message .file-info {
-        flex-grow: 1;
-    }
+		/* System Colors */
+		--system-message-bg: #f1f3f4;
+		--timestamp-color: #5f6368;
 
-    .file-message .file-name {
-        font-weight: bold;
-        margin-bottom: 0;
-    }
+		/* Focus Effects */
+		--input-focus-ring: rgba(26, 115, 232, 0.1);
+	}
 
-    .file-message .file-size {
-        font-size: 0.8rem;
-        color: #6c757d;
-    }
+	/* LLM Chat Container */
+	.llm-chat-container {
+		height: calc(100vh - 70px);
+		max-width: 768px; /* More like Gemini's width */
+		margin: 0 auto;
+		display: flex;
+		flex-direction: column;
+		background: linear-gradient(180deg, #ffffff 0%, #f8f9fa 100%);
+		overflow: hidden;
+		position: relative;
+	}
+
+	.chat-header {
+		padding: 1rem 1.5rem;
+		background-color: rgba(255, 255, 255, 0.95);
+		backdrop-filter: blur(8px);
+		border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+		position: sticky;
+		top: 0;
+		z-index: 10;
+	}
+	.chat-header h2 {
+		font-size: 1.25rem;
+		color: #202124; /* Google's text color */
+		font-weight: 500;
+	}
+
+	.chat-body {
+		overflow-y: auto;
+		padding: 1.5rem; /* Increased padding */
+		scroll-behavior: smooth;
+		-webkit-overflow-scrolling: touch;
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	/* Message Styles */
+	.message {
+		margin-bottom: 1.5rem;
+		max-width: 85%; /* Slightly reduced for better balance */
+		opacity: 0;
+		animation: messageAppear 0.3s ease forwards;
+		clear: both;
+		position: relative;
+		display: flex !important;
+		align-items: flex-start !important;
+		gap: 0.75rem !important;
+		float: none !important;
+		max-width: 85% !important;
+		clear: both !important;
+	}
+
+	@keyframes messageAppear {
+		from {
+			opacity: 0;
+			transform: translateY(8px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	.message-content {
+		padding: 0.75rem 1rem; /* Slightly adjusted padding */
+		border-radius: 12px;
+		font-size: 0.9375rem;
+		line-height: 1.6; /* Increased for better readability */
+		word-wrap: break-word;
+		word-break: break-word;
+		hyphens: auto;
+	}
+
+	 {
+		float: right;
+		margin-left: auto;
+		align-self: flex-end;
+		margin-left: auto !important;
+		flex-direction: row-reverse !important;
+	}
+
+	.message-user .message-content {
+		background-color: #e8f0fe;
+		color: #1f1f1f;
+		border: none; /* Remove border */
+		border-radius: 16px;
+	}
+
+	.message-ai {
+		float: left;
+		margin-right: auto;
+		align-self: flex-start;
+		margin-right: auto !important;
+	}
+
+	.message-ai .message-content {
+		background-color: #f8f9fa;
+		color: #1f1f1f; /* Darker text for better contrast */
+		border-radius: 16px; /* Rounder corners */
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+		border: 1px solid rgba(0, 0, 0, 0.05); /* Subtle border */
+	}
+
+	.message-timestamp {
+		font-size: 0.75rem;
+		color: #5f6368;
+		display: block;
+	}
+
+	/* Avatar Styles */
+	.message {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.75rem;
+	}
+
+	.message-avatar {
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		flex-shrink: 0;
+		background: #fff;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+		flex-shrink: 0 !important;
+		width: 32px !important;
+		height: 32px !important;
+		display: flex !important;
+		align-items: center !important;
+		justify-content: center !important;
+	}
+
+	.message-ai .message-avatar {
+		background: #e8f0fe;
+		color: #1a73e8;
+	}
+
+	.message-user .message-avatar {
+		background: #1a73e8;
+		color: white;
+		order: 1; /* Move to end for user messages */
+	}
+
+	.message-content-wrapper {
+		flex: 1;
+		max-width: calc(85% - 40px); /* Adjust for avatar width */
+		flex: 1 !important;
+	}
+
+	.message-user .message-content-wrapper {
+		margin-left: auto; /* Align to right */
+	}
+
+	/* Update message styles for new structure */
+	.message-user {
+		flex-direction: row-reverse; /* Avatar on right for user */
+	}
+
+	.message-timestamp {
+		font-size: var(--font-size-xs, 0.75rem);
+		color: var(--timestamp-color, #5f6368);
+		display: block;
+		margin-top: var(--space-2, 0.5rem);
+		opacity: 0.8;
+	}
+
+	/* AI Thinking Indicator */
+	.ai-thinking {
+		display: none;
+		padding: 0.5rem 0.75rem;
+		background: #f1f3f4;
+		border-radius: 16px;
+		margin-bottom: 1rem;
+		max-width: 65px; /* Slightly increased for better dot spacing */
+		float: left;
+		box-shadow: none;
+		border: none;
+		align-self: flex-start;
+		margin-left: 40px; /* Align with messages */
+	}
+
+	.typing-indicator {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.typing-indicator span {
+		width: 4px;
+		height: 4px;
+		background-color: #5f6368;
+		opacity: 0.6;
+		display: inline-block;
+		animation: typing 1.2s infinite ease-in-out;
+	}
+	.typing-indicator span:nth-child(1) {
+		animation-delay: 0s;
+	}
+	.typing-indicator span:nth-child(2) {
+		animation-delay: 0.2s;
+	}
+	.typing-indicator span:nth-child(3) {
+		animation-delay: 0.4s;
+	}
+
+	@keyframes typing {
+		0%,
+		100% {
+			transform: scale(1);
+		}
+		50% {
+			transform: scale(1.5);
+		}
+	}
+
+	/* Chat Input Area */
+	.chat-input-area {
+		padding: 1rem 1.5rem 1.5rem;
+		background: linear-gradient(
+			0deg,
+			rgba(255, 255, 255, 1) 0%,
+			rgba(255, 255, 255, 0.9) 100%
+		);
+		border-top: 1px solid rgba(0, 0, 0, 0.06);
+		position: sticky;
+		bottom: 0;
+		z-index: 10;
+	}
+
+	.chat-input-container {
+		display: flex;
+		align-items: flex-end;
+		background: #ffffff;
+		border: 1px solid rgba(0, 0, 0, 0.12);
+		border-radius: 24px;
+		padding: 0.75rem;
+		transition: all 0.2s ease;
+		box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+	}
+
+	.chat-input-container:hover {
+		border-color: rgba(0, 0, 0, 0.2);
+		box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
+	}
+
+	.chat-input-container:focus-within {
+		border-color: var(--input-focus-border);
+		box-shadow: 0 2px 6px rgba(26, 115, 232, 0.15),
+			0 0 0 2px var(--input-focus-ring);
+	}
+
+	.chat-textarea {
+		flex: 1;
+		min-height: 24px;
+		max-height: 200px;
+		padding: 0.5rem 0.75rem;
+		border: none;
+		background: transparent;
+		resize: none;
+		font-size: 0.9375rem;
+		line-height: 1.5;
+	}
+
+	.chat-textarea:focus {
+		outline: none;
+	}
+
+	.chat-textarea::placeholder {
+		color: #5f6368;
+		transition: color 0.2s ease;
+	}
+
+	.chat-textarea:focus::placeholder {
+		color: #9aa0a6;
+	}
+
+	.chat-input-actions {
+		display: flex;
+		gap: 0.5rem;
+		align-items: center;
+	}
+
+	.chat-button {
+		width: 32px;
+		height: 32px;
+		padding: 0;
+		border: none;
+		background: none;
+		color: #5f6368;
+		border-radius: 50%;
+		cursor: pointer;
+		transition: all 0.2s ease, background-color 0.15s ease; /* Smoother background transition */
+		display: flex; /* Add this */
+		align-items: center;
+		justify-content: center;
+	}
+
+	.chat-button:hover {
+		background-color: #f1f3f4;
+		color: #1a73e8;
+		transform: translateY(-1px);
+	}
+
+	.chat-button.primary {
+		color: #1a73e8;
+	}
+
+	.chat-button.primary:hover {
+		background-color: #e8f0fe;
+	}
+
+	.recording-indicator {
+		color: #d93025; /* Google's red */
+		display: none;
+		margin-left: 0.5rem;
+		animation: pulse 1.4s infinite ease-in-out;
+	}
+
+	@keyframes pulse {
+		0% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.5;
+		}
+		100% {
+			opacity: 1;
+		}
+	}
+
+	/* System Messages */
+	.message-system {
+		text-align: center;
+		margin: 1rem auto;
+		max-width: 100%;
+	}
+
+	.message-system .message-content {
+		display: inline-block;
+		background-color: var(--system-message-bg);
+		border-radius: 16px;
+		color: var(--timestamp-color);
+		font-size: 0.8125rem;
+	}
+
+	/* File Messages */
+	.file-message {
+		display: flex; /* Add this */
+		align-items: center;
+		background-color: var(--ai-bubble-bg); /* Add this */
+		border-radius: 8px;
+		padding: 0.75rem;
+		margin-top: 0.5rem;
+		border: 1px solid #dadce0;
+		transition: all 0.2s ease;
+	}
+
+	.file-message:hover {
+		background-color: #f1f3f4;
+		border-color: #1a73e8;
+		transform: translateY(-1px);
+	}
+
+	.file-message i {
+		font-size: 1.5rem;
+		margin-right: 0.75rem;
+		color: var(--send-button-color);
+	}
+	.file-message .file-info {
+		flex-grow: 1;
+	}
+
+	.file-message .file-name {
+		font-weight: var(--font-weight-medium, 500);
+		margin-bottom: 0;
+	}
+
+	.file-message .file-size {
+		font-size: 0.8125rem; /* Add this */
+		color: var(--timestamp-color);
+	}
+
+	/* Clearfix for floating messages */
+	.chat-body::after {
+		content: "";
+		display: table;
+		clear: both;
+	}
+
+	/* Responsive adjustments */
+	@media (max-width: 768px) {
+		.llm-chat-container {
+			height: calc(100vh - 56px);
+			border-radius: 0;
+		}
+
+		.message {
+			max-width: 85%;
+		}
+	}
+
+	/* Image Upload and Preview */
+	.image-upload-preview {
+		display: none; /* Hidden by default */
+		gap: 0.75rem;
+		padding: 0.75rem;
+		background: var(--ai-bubble-bg);
+		border-radius: 12px;
+		margin-bottom: 0.75rem;
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+	} /* Add closing brace */
+
+	.image-preview-item {
+		width: 100px;
+		height: 100px;
+		border-radius: 8px;
+		overflow: hidden;
+		flex-shrink: 0;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+	}
+
+	.image-preview-item img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	.image-preview-remove {
+		position: absolute;
+		top: 4px;
+		right: 4px;
+		width: 20px;
+		height: 20px;
+		background: rgba(0, 0, 0, 0.5);
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: white;
+		cursor: pointer;
+		font-size: 12px;
+		transition: all 0.2s ease;
+	}
+
+	.image-preview-remove:hover {
+		background: rgba(0, 0, 0, 0.7);
+		transform: scale(1.1);
+	}
+
+	/* Message Image Content */
+	.message-images {
+		display: flex;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+		margin-top: 0.5rem;
+	}
+
+	.message-image {
+		max-width: 200px;
+		max-height: 200px;
+		border-radius: 8px;
+		cursor: pointer;
+		transition: transform 0.2s ease;
+	}
+
+	.message-image:hover {
+		transform: scale(1.02);
+	}
+
+	/* Drag and Drop Zone */
+	.drag-drop-overlay {
+		display: none;
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(255, 255, 255, 0.9);
+		z-index: 1000;
+		align-items: center;
+		justify-content: center;
+		font-size: 1.25rem;
+		color: var(--send-button-color);
+		backdrop-filter: blur(4px);
+	}
+
+	.drag-drop-overlay.active {
+		display: flex;
+	}
+
+	.drag-drop-message {
+		padding: 2rem;
+		border: 2px dashed var(--send-button-color);
+		border-radius: 12px;
+		background: white;
+		text-align: center;
+	}
+
+	/* Image Modal */
+	.image-modal {
+		display: none;
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.9);
+		z-index: 1100;
+		padding: 2rem;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.image-modal.active {
+		display: flex;
+	}
+
+	.image-modal img {
+		max-width: 90%;
+		max-height: 90vh;
+		border-radius: 8px;
+		object-fit: contain;
+	}
+
+	.image-modal-close {
+		position: absolute;
+		top: 1rem;
+		right: 1rem;
+		color: white;
+		cursor: pointer;
+		font-size: 1.5rem;
+		width: 40px;
+		height: 40px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 50%;
+		background: rgba(0, 0, 0, 0.5);
+		transition: all 0.2s ease;
+	}
 </style>
-{% endblock %}
+{% endblock %} {% block content %}
+<div class="llm-chat-container">
+	<div class="chat-header">
+		<h2 class="mb-0">AI Medical Assistant</h2>
+	</div>
 
-{% block content %}
-<div class="container-fluid">
-    <h2 class="mb-4">AI Medical Assistant</h2>
-    
-    <div class="row">
-        <div class="col-md-8">
-            <div class="card shadow-sm">
-                <div class="card-header">
-                    <h5 class="mb-0">Chat with AI</h5>
-                </div>
-                <div class="card-body">
-                    <div class="chat-container">
-                        <div class="chat-messages" id="chatMessages">
-                            <div class="message message-ai">
-                                <div class="message-content">
-                                    Hello! I'm your medical assistant. How can I help you today?
-                                </div>
-                                <span class="message-timestamp">{{ current_time }}</span>
-                            </div>
-                            
-                            <!-- Messages will be dynamically added here -->
-                            
-                            <div class="ai-thinking" id="aiThinking">
-                                <div class="typing-indicator">
-                                    <span></span>
-                                    <span></span>
-                                    <span></span>
-                                </div>
-                                <span class="ms-2">AI is thinking...</span>
-                            </div>
-                        </div>
-                        
-                        <form id="chatForm" class="mt-3">
-                            <div class="input-group mb-2">
-                                <input type="text" class="form-control chat-input" id="chatInput" placeholder="Type your message...">
-                                <button class="btn btn-primary" type="submit">
-                                    <i class="fas fa-paper-plane"></i>
-                                </button>
-                            </div>
-                            
-                            <div class="d-flex">
-                                <button type="button" class="btn btn-outline-secondary me-2" id="fileUploadBtn">
-                                    <i class="fas fa-file-upload"></i> Upload File
-                                </button>
-                                <button type="button" class="btn btn-outline-secondary" id="micButton">
-                                    <i class="fas fa-microphone"></i>
-                                    <span class="recording-indicator" id="recordingIndicator"> Recording...</span>
-                                </button>
-                                <input type="file" id="chatFileUpload" class="d-none" accept=".pdf,.png,.jpg,.jpeg">
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="col-md-4">
-            <div class="card shadow-sm mb-4">
-                <div class="card-header">
-                    <h5 class="mb-0">Conversation History</h5>
-                </div>
-                <div class="card-body">
-                    <div class="list-group">
-                        <a href="#" class="list-group-item list-group-item-action">
-                            <div class="d-flex w-100 justify-content-between">
-                                <h6 class="mb-1">Heart Disease Symptoms</h6>
-                                <small>3 days ago</small>
-                            </div>
-                            <small>12 messages</small>
-                        </a>
-                        <a href="#" class="list-group-item list-group-item-action">
-                            <div class="d-flex w-100 justify-content-between">
-                                <h6 class="mb-1">Medication Interactions</h6>
-                                <small>1 week ago</small>
-                            </div>
-                            <small>8 messages</small>
-                        </a>
-                        <a href="#" class="list-group-item list-group-item-action">
-                            <div class="d-flex w-100 justify-content-between">
-                                <h6 class="mb-1">Diet Recommendations</h6>
-                                <small>2 weeks ago</small>
-                            </div>
-                            <small>15 messages</small>
-                        </a>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="card shadow-sm">
-                <div class="card-header">
-                    <h5 class="mb-0">Health Tips</h5>
-                </div>
-                <div class="card-body">
-                    <div id="healthTip" class="mb-3">
-                        <p><strong>Tip of the day:</strong> Regular exercise can help maintain healthy blood pressure levels.</p>
-                    </div>
-                    <button class="btn btn-sm btn-outline-primary" id="newTipBtn">New Tip</button>
-                </div>
-            </div>
-        </div>
-    </div>
+	<div class="chat-body" id="chatMessages">
+		<div class="message message-ai">
+			<div class="message-avatar">
+				<i class="fas fa-robot"></i>
+			</div>
+			<div class="message-content-wrapper">
+				<div class="message-content">
+					Hello! I'm your medical assistant. How can I help you today?
+				</div>
+				<span class="message-timestamp">{{ current_time }}</span>
+			</div>
+		</div>
+
+		<div class="ai-thinking" id="aiThinking">
+			<div class="typing-indicator">
+				<span></span>
+				<span></span>
+				<span></span>
+			</div>
+		</div>
+	</div>
+
+	<div class="chat-input-area">
+		<form id="chatForm">
+			<div class="chat-input-container">
+				<textarea
+					class="chat-textarea"
+					id="chatInput"
+					placeholder="Type your message..."
+					rows="1"
+					aria-label="Chat message input"
+				></textarea>
+
+				<div class="chat-input-actions">
+					<button
+						type="button"
+						class="chat-button"
+						id="fileUploadBtn"
+						aria-label="Upload file"
+					>
+						<i class="fas fa-file-upload"></i>
+					</button>
+
+					<button
+						type="button"
+						class="chat-button"
+						id="micButton"
+						aria-label="Record voice message"
+					>
+						<i class="fas fa-microphone"></i>
+						<span class="recording-indicator" id="recordingIndicator"
+							>Recording...</span
+						>
+					</button>
+
+					<button
+						type="submit"
+						class="chat-button primary"
+						aria-label="Send message"
+					>
+						<i class="fas fa-paper-plane"></i>
+					</button>
+				</div>
+
+				<input
+					type="file"
+					id="chatFileUpload"
+					class="d-none"
+					accept="image/*,.pdf,.png,.jpg,.jpeg"
+					multiple
+					aria-hidden="true"
+				/>
+			</div>
+
+			<div class="image-upload-preview" id="imagePreview"></div>
+		</form>
+	</div>
+	<div class="drag-drop-overlay" id="dragDropOverlay">
+		<div class="drag-drop-message">
+			<i class="fas fa-cloud-upload-alt mb-3 d-block"></i>
+			Drop images here
+		</div>
+	</div>
 </div>
-{% endblock %}
+
+<div class="image-modal" id="imageModal">
+	<div class="image-modal-close" id="imageModalClose">
+		<i class="fas fa-times"></i>
+	</div>
+	<img src="" alt="Full size image" />
+</div>
 
 {% block scripts %}
 <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        // Initialize socket connection
-        const socket = io();
-        
-        // DOM Elements
-        const chatForm = document.getElementById('chatForm');
-        const chatInput = document.getElementById('chatInput');
-        const chatMessages = document.getElementById('chatMessages');
-        const fileUploadBtn = document.getElementById('fileUploadBtn');
-        const fileInput = document.getElementById('chatFileUpload');
-        const micButton = document.getElementById('micButton');
-        const recordingIndicator = document.getElementById('recordingIndicator');
-        const aiThinking = document.getElementById('aiThinking');
-        const newTipBtn = document.getElementById('newTipBtn');
-        
-        // Voice recording variables
-        let mediaRecorder;
-        let audioChunks = [];
-        let isRecording = false;
-        
-        // Connect to socket
-        socket.on('connect', () => {
-            console.log('Connected to chat server');
-            addSystemMessage('Connected to chat server.');
-        });
-        
-        // Disconnect from socket
-        socket.on('disconnect', () => {
-            console.log('Disconnected from chat server');
-            addSystemMessage('Disconnected from chat server.');
-        });
-        
-        // Receive message
-        socket.on('response', (data) => {
-            hideAIThinking();
-            addMessage(data.data, 'ai');
-            // Scroll to bottom of chat
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        });
-        
-        // Send message on form submit
-        if (chatForm) {
-            chatForm.addEventListener('submit', function(e) {
-                e.preventDefault();
-                
-                const message = chatInput.value.trim();
-                if (message) {
-                    // Add user message to chat
-                    addMessage(message, 'user');
-                    
-                    // Show AI thinking
-                    showAIThinking();
-                    
-                    // Send message to server
-                    socket.emit('message', { data: message });
-                    
-                    // Clear input
-                    chatInput.value = '';
-                }
-            });
-        }
-        
-        // File upload button click
-        if (fileUploadBtn && fileInput) {
-            fileUploadBtn.addEventListener('click', function(e) {
-                fileInput.click();
-            });
-            
-            fileInput.addEventListener('change', function(e) {
-                if (fileInput.files.length > 0) {
-                    handleFileUpload(fileInput.files[0]);
-                }
-            });
-        }
-        
-        // Microphone button click
-        if (micButton) {
-            micButton.addEventListener('click', function() {
-                if (!isRecording) {
-                    startRecording();
-                } else {
-                    stopRecording();
-                }
-            });
-        }
-        
-        // New health tip button
-        if (newTipBtn) {
-            newTipBtn.addEventListener('click', function() {
-                const healthTips = [
-                    'Stay hydrated by drinking at least 8 glasses of water daily.',
-                    'Aim for 7-9 hours of sleep each night for optimal health.',
-                    'Include a variety of colorful vegetables in your daily diet.',
-                    'Regular check-ups can help detect health issues early.',
-                    'Take short breaks when working at a computer to reduce eye strain.',
-                    'Walking for 30 minutes daily can improve cardiovascular health.'
-                ];
-                
-                const tipElement = document.getElementById('healthTip');
-                const randomTip = healthTips[Math.floor(Math.random() * healthTips.length)];
-                tipElement.innerHTML = `<p><strong>Tip of the day:</strong> ${randomTip}</p>`;
-            });
-        }
-        
-        // Function to add a message to the chat
-        function addMessage(message, sender) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message message-${sender}`;
-            
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-            
-            // Check if message contains file information (JSON string starting with {)
-            if (typeof message === 'string' && message.trim().startsWith('{') && message.trim().endsWith('}')) {
-                try {
-                    const fileData = JSON.parse(message);
-                    if (fileData.type === 'file') {
-                        // Create file message
-                        const fileElem = document.createElement('div');
-                        fileElem.className = 'file-message';
-                        
-                        // Icon based on file type
-                        const iconElem = document.createElement('i');
-                        if (fileData.fileType.includes('image')) {
-                            iconElem.className = 'fas fa-file-image';
-                        } else if (fileData.fileType.includes('pdf')) {
-                            iconElem.className = 'fas fa-file-pdf';
-                        } else {
-                            iconElem.className = 'fas fa-file';
-                        }
-                        
-                        // File info
-                        const infoDiv = document.createElement('div');
-                        infoDiv.className = 'file-info';
-                        
-                        const fileName = document.createElement('p');
-                        fileName.className = 'file-name';
-                        fileName.textContent = fileData.fileName;
-                        
-                        const fileSize = document.createElement('p');
-                        fileSize.className = 'file-size';
-                        fileSize.textContent = formatFileSize(fileData.fileSize);
-                        
-                        infoDiv.appendChild(fileName);
-                        infoDiv.appendChild(fileSize);
-                        
-                        fileElem.appendChild(iconElem);
-                        fileElem.appendChild(infoDiv);
-                        contentDiv.appendChild(fileElem);
-                    } else {
-                        contentDiv.textContent = message;
-                    }
-                } catch (e) {
-                    contentDiv.textContent = message;
-                }
-            } else {
-                contentDiv.textContent = message;
-            }
-            
-            const timestamp = document.createElement('span');
-            timestamp.className = 'message-timestamp';
-            const now = new Date();
-            timestamp.textContent = now.toLocaleTimeString();
-            
-            messageDiv.appendChild(contentDiv);
-            messageDiv.appendChild(timestamp);
-            
-            // Insert before the "AI is thinking" indicator
-            chatMessages.insertBefore(messageDiv, aiThinking);
-            
-            // Scroll to bottom
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        }
-        
-        // Format file size
-        function formatFileSize(bytes) {
-            if (bytes < 1024) return bytes + ' bytes';
-            else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-            else return (bytes / 1048576).toFixed(1) + ' MB';
-        }
-        
-        // Function to show "AI is thinking"
-        function showAIThinking() {
-            aiThinking.style.display = 'block';
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        }
-        
-        // Function to hide "AI is thinking"
-        function hideAIThinking() {
-            aiThinking.style.display = 'none';
-        }
-        
-        // Function to handle file uploads
-        function handleFileUpload(file) {
-            // Create form data
-            const formData = new FormData();
-            formData.append('file', file);
-            
-            // Add message about the file
-            const fileData = {
-                type: 'file',
-                fileName: file.name,
-                fileSize: file.size,
-                fileType: file.type
-            };
-            
-            addMessage(JSON.stringify(fileData), 'user');
-            
-            // Show AI thinking
-            showAIThinking();
-            
-            // Upload the file to the server
-            fetch('/chat/upload', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                return response.json();
-            })
-            .then(data => {
-                // Hide AI thinking
-                hideAIThinking();
-                
-                // Add AI response
-                addMessage(`I've received your file: ${file.name}`, 'ai');
-                
-                // If analysis available, show it
-                if (data.analysis) {
-                    addMessage(data.analysis, 'ai');
-                }
-            })
-            .catch(error => {
-                console.error('Error uploading file:', error);
-                hideAIThinking();
-                addSystemMessage('Error uploading file. Please try again.');
-            });
-        }
-        
-        // Function to add a system message to the chat
-        function addSystemMessage(message) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = 'message message-system';
-            
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-            contentDiv.textContent = message;
-            
-            messageDiv.appendChild(contentDiv);
-            
-            // Insert before the "AI is thinking" indicator
-            chatMessages.insertBefore(messageDiv, aiThinking);
-            
-            // Scroll to bottom
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        }
-        
-        // Start audio recording
-        function startRecording() {
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                navigator.mediaDevices.getUserMedia({ audio: true })
-                .then(stream => {
-                    mediaRecorder = new MediaRecorder(stream);
-                    audioChunks = [];
-                    
-                    mediaRecorder.addEventListener('dataavailable', event => {
-                        audioChunks.push(event.data);
-                    });
-                    
-                    mediaRecorder.addEventListener('stop', () => {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                        processAudio(audioBlob);
-                    });
-                    
-                    mediaRecorder.start();
-                    isRecording = true;
-                    recordingIndicator.style.display = 'inline';
-                    micButton.innerHTML = '<i class="fas fa-stop"></i>';
-                })
-                .catch(error => {
-                    console.error('Error accessing microphone:', error);
-                    addSystemMessage('Unable to access microphone. Please check your settings.');
-                });
-            } else {
-                addSystemMessage('Your browser does not support audio recording.');
-            }
-        }
-        
-        // Stop audio recording
-        function stopRecording() {
-            if (mediaRecorder && isRecording) {
-                mediaRecorder.stop();
-                isRecording = false;
-                recordingIndicator.style.display = 'none';
-                micButton.innerHTML = '<i class="fas fa-microphone"></i>';
-            }
-        }
-        
-        // Process audio recording
-        function processAudio(audioBlob) {
-            // Create form data
-            const formData = new FormData();
-            formData.append('audio', audioBlob, 'recording.wav');
-            
-            // Show AI thinking
-            showAIThinking();
-            addSystemMessage('Processing your voice message...');
-            
-            // Send to server
-            fetch('/chat/transcribe', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                return response.json();
-            })
-            .then(data => {
-                if (data.text) {
-                    // Add transcribed text message
-                    addMessage(data.text, 'user');
-                    
-                    // Send message to server
-                    socket.emit('message', { data: data.text });
-                } else {
-                    hideAIThinking();
-                    addSystemMessage('Could not transcribe audio. Please try again.');
-                }
-            })
-            .catch(error => {
-                console.error('Error transcribing audio:', error);
-                hideAIThinking();
-                addSystemMessage('Error processing audio. Please try again.');
-            });
-        }
-    });
+	document.addEventListener("DOMContentLoaded", function () {
+		// ----------------------------------------
+		// INITIALIZATION AND SETUP
+		// ----------------------------------------
+
+		// Initialize socket connection
+		const socket = io();
+
+		// DOM Elements
+		const chatForm = document.getElementById("chatForm");
+		const chatInput = document.getElementById("chatInput");
+		const chatMessages = document.getElementById("chatMessages");
+		const fileUploadBtn = document.getElementById("fileUploadBtn");
+		const fileInput = document.getElementById("chatFileUpload");
+		const micButton = document.getElementById("micButton");
+		const recordingIndicator = document.getElementById("recordingIndicator");
+		const aiThinking = document.getElementById("aiThinking");
+		const imagePreview = document.getElementById("imagePreview");
+		const dragDropOverlay = document.getElementById("dragDropOverlay");
+		const imageModal = document.getElementById("imageModal");
+		const imageModalClose = document.getElementById("imageModalClose");
+		const modalImage = imageModal.querySelector("img");
+
+		// Voice recording variables
+		let mediaRecorder;
+		let audioChunks = [];
+		let isRecording = false;
+
+		// Store selected images
+		let selectedImages = [];
+
+		// Auto-growing textarea
+		function autoGrowTextarea(element) {
+			element.style.height = "auto";
+			element.style.height = element.scrollHeight + "px";
+		}
+
+		if (chatInput) {
+			chatInput.addEventListener("input", function () {
+				autoGrowTextarea(this);
+			});
+
+			// Handle Enter key to submit form, Shift+Enter for new line
+			chatInput.addEventListener("keydown", function (e) {
+				if (e.key === "Enter" && !e.shiftKey) {
+					e.preventDefault();
+	       // Connect to socket
+	       socket.on('connect', () => {
+	           console.log('Connected to chat server');
+	           // This will log to console but won't display in UI
+	       });
+
+	       // Disconnect from socket
+	       socket.on('disconnect', () => {
+	           console.log('Disconnected from chat server');
+	           // No UI message shown
+	       });
+					behavior: "smooth",
+				});
+			}
+		}
+
+		// ----------------------------------------
+		// SOCKET EVENT HANDLERS
+		// ----------------------------------------
+
+		// Connect to socket
+		socket.on("connect", () => {
+			console.log("Connected to chat server");
+			 // This will log to console but won't display in UI
+		});
+
+		// Disconnect from socket
+		socket.on("disconnect", () => {
+			console.log("Disconnected from chat server");
+			 // No UI message shown
+		});
+
+		// Receive message
+		socket.on("response", (data) => {
+			hideAIThinking();
+			addMessage(data.data, "ai");
+			smoothScrollToBottom();
+		});
+
+		// ----------------------------------------
+		// UI EVENT HANDLERS
+		// ----------------------------------------
+
+		// Send message on form submit
+		if (chatForm) {
+			chatForm.addEventListener("submit", function (e) {
+				e.preventDefault();
+
+				const message = chatInput.value.trim();
+				if (message) {
+					// Add user message to chat
+					addMessage(message, "user");
+
+					// Show AI thinking
+					showAIThinking();
+
+					// Send message to server
+					socket.emit("message", { data: message });
+
+					// Clear input
+					chatInput.value = "";
+				}
+			});
+		}
+		// File upload button click
+		if (fileUploadBtn && fileInput) {
+			fileUploadBtn.addEventListener("click", function (e) {
+				fileInput.click();
+			});
+		}
+
+		// Drag and drop handling
+		document.addEventListener("dragenter", function (e) {
+			e.preventDefault();
+			dragDropOverlay.classList.add("active");
+		});
+
+		dragDropOverlay.addEventListener("dragleave", function (e) {
+			e.preventDefault();
+			dragDropOverlay.classList.remove("active");
+		});
+
+		dragDropOverlay.addEventListener("dragover", function (e) {
+			e.preventDefault();
+		});
+
+		dragDropOverlay.addEventListener("drop", function (e) {
+			e.preventDefault();
+			dragDropOverlay.classList.remove("active");
+
+			const files = Array.from(e.dataTransfer.files).filter((file) =>
+				file.type.startsWith("image/")
+			);
+			handleImageSelect(files);
+		});
+
+		// Image selection handling
+		fileInput.addEventListener("change", function (e) {
+			const files = Array.from(this.files);
+
+			// Handle file uploads (PDFs, etc.)
+			const nonImageFiles = files.filter(
+				(file) => !file.type.startsWith("image/")
+			);
+			if (nonImageFiles.length > 0) {
+				handleFileUpload(nonImageFiles[0]);
+			}
+
+			// Handle image files separately
+			const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+			if (imageFiles.length > 0) {
+				handleImageSelect(imageFiles);
+			}
+		});
+
+		function handleImageSelect(files) {
+			files.forEach((file) => {
+				if (file.type.startsWith("image/")) {
+					const reader = new FileReader();
+					reader.onload = function (e) {
+						selectedImages.push({
+							file: file,
+							dataUrl: e.target.result,
+						});
+						updateImagePreview();
+					};
+					reader.readAsDataURL(file);
+				}
+			});
+		}
+
+		function updateImagePreview() {
+			imagePreview.innerHTML = "";
+
+			if (selectedImages.length > 0) {
+				imagePreview.style.display =
+					"flex"; /* Show as flex when images are present */
+
+				selectedImages.forEach((image, index) => {
+					const previewItem = document.createElement("div");
+					previewItem.className = "image-preview-item";
+
+					const img = document.createElement("img");
+					img.src = image.dataUrl;
+
+					const removeBtn = document.createElement("div");
+					removeBtn.className = "image-preview-remove";
+					removeBtn.innerHTML = '<i class="fas fa-times"></i>';
+					removeBtn.onclick = () => removeImage(index);
+
+					previewItem.appendChild(img);
+					previewItem.appendChild(removeBtn);
+					imagePreview.appendChild(previewItem);
+				});
+			} else {
+				imagePreview.style.display = "none";
+			}
+		}
+
+		function removeImage(index) {
+			selectedImages.splice(index, 1);
+			updateImagePreview();
+		}
+
+		// Image modal handling
+		function showImageModal(src) {
+			modalImage.src = src;
+			imageModal.classList.add("active");
+		}
+
+		imageModalClose.onclick = function () {
+			imageModal.classList.remove("active");
+		};
+
+		// Microphone button click
+		if (micButton) {
+			micButton.addEventListener("click", function () {
+				if (!isRecording) {
+					startRecording();
+				} else {
+					stopRecording();
+				}
+			});
+		}
+		// ----------------------------------------
+		// MESSAGE HANDLING FUNCTIONS
+		// ----------------------------------------
+
+		// Function to add a message to the chat
+		function addMessage(message, sender) {
+			const messageDiv = document.createElement("div");
+			messageDiv.className = `message message-${sender}`;
+
+			// Create avatar with correct icon
+			const avatarDiv = document.createElement("div");
+			avatarDiv.className = "message-avatar";
+			if (sender === "ai") {
+				avatarDiv.innerHTML = '<i class="fas fa-robot"></i>';
+			} else {
+				avatarDiv.innerHTML = '<i class="fas fa-user"></i>';
+			}
+
+			// Append avatar first for proper positioning
+			messageDiv.appendChild(avatarDiv);
+
+			// Content wrapper
+			const contentWrapper = document.createElement("div");
+			contentWrapper.className = "message-content-wrapper";
+
+			const contentDiv = document.createElement("div");
+			contentDiv.className = "message-content";
+
+			// Check if message contains file information (JSON string starting with {)
+			if (
+				typeof message === "string" &&
+				message.trim().startsWith("{") &&
+				message.trim().endsWith("}")
+			) {
+				try {
+					const fileData = JSON.parse(message);
+					if (fileData.type === "file") {
+						// Create file message
+						const fileElem = document.createElement("div");
+						fileElem.className = "file-message";
+
+						// Icon based on file type
+						const iconElem = document.createElement("i");
+						if (fileData.fileType.includes("image")) {
+							iconElem.className = "fas fa-file-image";
+						} else if (fileData.fileType.includes("pdf")) {
+							iconElem.className = "fas fa-file-pdf";
+						} else {
+							iconElem.className = "fas fa-file";
+						}
+
+						// File info
+						const infoDiv = document.createElement("div");
+						infoDiv.className = "file-info";
+
+						const fileName = document.createElement("p");
+						fileName.className = "file-name";
+						fileName.textContent = fileData.fileName;
+
+						const fileSize = document.createElement("p");
+						fileSize.className = "file-size";
+						fileSize.textContent = formatFileSize(fileData.fileSize);
+
+						infoDiv.appendChild(fileName);
+						infoDiv.appendChild(fileSize);
+
+						fileElem.appendChild(iconElem);
+						fileElem.appendChild(infoDiv);
+						contentDiv.appendChild(fileElem);
+					} else {
+						contentDiv.textContent = message;
+					}
+				} catch (e) {
+					contentDiv.textContent = message;
+				}
+			} else {
+				// Check if it might be markdown and render it
+				if (
+					(sender === "ai" && message.includes("\n")) ||
+					message.includes("**") ||
+					message.includes("#") ||
+					message.includes("- ")
+				) {
+					try {
+						// Simple markdown-like formatting
+						let formattedMessage = message
+							// Bold text
+							.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+							// Headers
+							.replace(/^# (.*$)/gm, "<h3>$1</h3>")
+							.replace(/^## (.*$)/gm, "<h4>$1</h4>")
+							.replace(/^### (.*$)/gm, "<h5>$1</h5>")
+							// Lists
+							.replace(/^\- (.*$)/gm, "<li>$1</li>")
+							// Line breaks
+							.replace(/\n/g, "<br>");
+
+						// Wrap lists in ul tags
+						if (formattedMessage.includes("<li>")) {
+							formattedMessage = formattedMessage.replace(/(<li>.*?<\/li>)/gs, "<ul>$1</ul>");
+						}
+
+						contentDiv.innerHTML = formattedMessage;
+					} catch (e) {
+						contentDiv.textContent = message;
+					}
+				} else {
+					contentDiv.textContent = message;
+				}
+			}
+
+			contentWrapper.appendChild(contentDiv);
+
+			// Add images if this is a user message with selected images
+			if (sender === "user" && selectedImages.length > 0) {
+				const imagesDiv = document.createElement("div");
+				imagesDiv.className = "message-images";
+
+				selectedImages.forEach((image) => {
+					const img = document.createElement("img");
+					img.src = image.dataUrl;
+					img.className = "message-image";
+					img.onclick = () => showImageModal(image.dataUrl);
+					imagesDiv.appendChild(img);
+				});
+
+				contentDiv.appendChild(imagesDiv);
+
+				// Clear selected images after sending
+				selectedImages = [];
+				updateImagePreview();
+			}
+
+			const timestamp = document.createElement("span");
+			timestamp.className = "message-timestamp";
+			const now = new Date();
+			timestamp.textContent = now.toLocaleTimeString();
+			contentWrapper.appendChild(timestamp);
+
+			messageDiv.appendChild(contentWrapper);
+
+			// Insert before the "AI is thinking" indicator
+			chatMessages.insertBefore(messageDiv, aiThinking);
+		}
+
+		// Format file size
+		function formatFileSize(bytes) {
+			if (bytes < 1024) return bytes + " bytes";
+			else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+			else return (bytes / 1048576).toFixed(1) + " MB";
+		}
+
+		// Function to show "AI is thinking"
+		function showAIThinking() {
+			aiThinking.style.display = "block";
+			smoothScrollToBottom();
+
+			// Reset textarea height after sending message
+			if (chatInput) {
+				setTimeout(() => {
+					chatInput.style.height = "auto";
+				}, 100);
+			}
+		}
+
+		// Function to hide AI thinking indicator
+		function hideAIThinking() {
+			aiThinking.style.display = "none";
+		}
+
+		// ----------------------------------------
+		// FILE HANDLING FUNCTIONS
+		// ----------------------------------------
+
+		// Function to handle file uploads
+		function handleFileUpload(file) {
+			// Create form data
+			const formData = new FormData();
+			formData.append("file", file);
+
+			// Add message about the file
+			const fileData = {
+				type: "file",
+				fileName: file.name,
+				fileSize: file.size,
+				fileType: file.type,
+			};
+
+			addMessage(JSON.stringify(fileData), "user");
+
+			// Show AI thinking
+			showAIThinking();
+
+			// Upload the file to the server
+			fetch("/chat/upload", {
+				method: "POST",
+				body: formData,
+			})
+				.then((response) => {
+					if (!response.ok) {
+						throw new Error("Network response was not ok");
+					}
+					return response.json();
+				})
+				.then((data) => {
+					// Hide AI thinking
+					hideAIThinking();
+
+					// Add AI response
+					addMessage(`I've received your file: ${file.name}`, "ai");
+
+					// If analysis available, show it
+					if (data.analysis) {
+						addMessage(data.analysis, "ai");
+					}
+				})
+				.catch((error) => {
+					console.error("Error uploading file:", error);
+					hideAIThinking();
+					addSystemMessage("Error uploading file. Please try again.");
+				});
+		}
+
+		// ----------------------------------------
+		// SYSTEM MESSAGE FUNCTIONS
+		// ----------------------------------------
+
+		// Function to add a system message to the chat
+		function addSystemMessage(message) {
+			const messageDiv = document.createElement("div");
+			messageDiv.className = "message message-system";
+
+			const contentDiv = document.createElement("div");
+			contentDiv.className = "message-content";
+			contentDiv.textContent = message;
+
+			messageDiv.appendChild(contentDiv);
+
+			// Insert before the "AI is thinking" indicator
+			chatMessages.insertBefore(messageDiv, aiThinking);
+
+			// Scroll to bottom after adding system message
+			smoothScrollToBottom();
+		}
+
+		// ----------------------------------------
+		// AUDIO RECORDING FUNCTIONS
+		// ----------------------------------------
+
+		// Start audio recording
+		function startRecording() {
+			if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+				navigator.mediaDevices
+					.getUserMedia({ audio: true })
+					.then((stream) => {
+						mediaRecorder = new MediaRecorder(stream);
+						audioChunks = [];
+
+						mediaRecorder.addEventListener("dataavailable", (event) => {
+							audioChunks.push(event.data);
+						});
+
+						mediaRecorder.addEventListener("stop", () => {
+							const audioBlob = new Blob(audioChunks, { type: "audio/wav" });
+							processAudio(audioBlob);
+						});
+
+						mediaRecorder.start();
+						isRecording = true;
+						recordingIndicator.style.display = "inline";
+						micButton.innerHTML = '<i class="fas fa-stop"></i>';
+					})
+					.catch((error) => {
+						console.error("Error accessing microphone:", error);
+						addSystemMessage(
+							"Unable to access microphone. Please check your settings."
+						);
+					});
+			} else {
+				addSystemMessage("Your browser does not support audio recording.");
+			}
+		}
+
+		// Stop audio recording
+		function stopRecording() {
+			if (mediaRecorder && isRecording) {
+				mediaRecorder.stop();
+				isRecording = false;
+				recordingIndicator.style.display = "none";
+				micButton.innerHTML = '<i class="fas fa-microphone"></i>';
+			}
+		}
+
+		// Process audio recording
+		function processAudio(audioBlob) {
+			// Create form data
+			const formData = new FormData();
+			formData.append("audio", audioBlob, "recording.wav");
+
+			// Show AI thinking
+			showAIThinking();
+			addSystemMessage("Processing your voice message...");
+
+			// Send to server
+			fetch("/chat/transcribe", {
+				method: "POST",
+				body: formData,
+			})
+				.then((response) => {
+					if (!response.ok) {
+						throw new Error("Network response was not ok");
+					}
+					return response.json();
+				})
+				.then((data) => {
+					if (data.text) {
+						// Add transcribed text message
+						addMessage(data.text, "user");
+
+						// Send message to server
+						socket.emit("message", { data: data.text });
+					} else {
+						hideAIThinking();
+						addSystemMessage("Could not transcribe audio. Please try again.");
+					}
+				})
+				.catch((error) => {
+					console.error("Error transcribing audio:", error);
+					hideAIThinking();
+					addSystemMessage("Error processing audio. Please try again.");
+				});
+		}
+	});
 </script>
 {% endblock %}

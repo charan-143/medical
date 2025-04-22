@@ -422,7 +422,6 @@ button, .btn {
 }
 
 .message-user {
-  background-color: var(--primary-light);
   color: var(--text-light);
   margin-left: auto;
 }
