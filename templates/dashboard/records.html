@@ -843,5 +843,163 @@ function createNewFolder(folderName) {
         }
     });
 }
+
+// File preview functionality
+document.addEventListener('DOMContentLoaded', function() {
+    // Get all view file buttons
+    const viewButtons = document.querySelectorAll('.view-file-btn');
+    
+    // Add click handler to each button
+    viewButtons.forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            // Get the parent file item element that contains all the data attributes
+            const fileItem = this.closest('.file-item');
+            if (!fileItem) return;
+            
+            // Extract file information from data attributes
+            const filePath = fileItem.dataset.filePath;
+            const fileName = fileItem.dataset.filename;
+            const fileType = fileItem.dataset.fileType;
+            const fileSize = fileItem.dataset.fileSize;
+            const uploadDate = fileItem.dataset.uploadDate;
+            const description = fileItem.dataset.description;
+            const documentId = fileItem.dataset.documentId;
+            
+            // Show the preview modal
+            showFilePreview(filePath, fileName, fileType, fileSize, uploadDate, description, documentId);
+        });
+    });
+});
+
+/**
+ * Shows the file preview modal with the appropriate content based on file type
+ */
+function showFilePreview(filePath, fileName, fileType, fileSize, uploadDate, description, documentId) {
+    // Get modal elements
+    const modal = document.getElementById('documentPreviewModal');
+    if (!modal) return;
+    
+    // Get preview containers
+    const imagePreview = document.getElementById('imagePreview');
+    const pdfPreview = document.getElementById('pdfPreview');
+    const previewPlaceholder = document.getElementById('previewPlaceholder');
+    
+    // Get file metadata elements
+    const fileNameElement = document.getElementById('fileName');
+    const fileTypeElement = document.getElementById('fileType');
+    const fileSizeElement = document.getElementById('fileSize');
+    const uploadDateElement = document.getElementById('uploadDate');
+    const fileDescriptionElement = document.getElementById('fileDescription');
+    const descriptionRow = document.getElementById('descriptionRow');
+    
+    // Get download button
+    const downloadButton = document.getElementById('downloadButton');
+    
+    // Hide all preview containers initially
+    imagePreview.classList.add('d-none');
+    pdfPreview.classList.add('d-none');
+    previewPlaceholder.classList.add('d-none');
+    
+    // Update file metadata
+    if (fileNameElement) fileNameElement.textContent = fileName || '-';
+    if (fileTypeElement) fileTypeElement.textContent = fileType ? fileType.toUpperCase() : '-';
+    if (fileSizeElement) fileSizeElement.textContent = formatFileSize(parseInt(fileSize, 10)) || '-';
+    if (uploadDateElement) uploadDateElement.textContent = uploadDate || '-';
+    
+    // Handle description
+    if (fileDescriptionElement) {
+        if (description && description.trim() !== '') {
+            fileDescriptionElement.textContent = description;
+            if (descriptionRow) descriptionRow.classList.remove('d-none');
+        } else {
+            fileDescriptionElement.textContent = '-';
+            if (descriptionRow) descriptionRow.classList.add('d-none');
+        }
+    }
+    
+    // Set download button URL
+    if (downloadButton) {
+        downloadButton.href = filePath;
+        downloadButton.setAttribute('download', fileName);
+    }
+    
+    // Set modal title
+    const modalTitle = modal.querySelector('.modal-title');
+    if (modalTitle) modalTitle.textContent = fileName || 'Document Preview';
+    
+    // Determine the file type and show appropriate preview
+    const lowerFileType = fileType ? fileType.toLowerCase() : '';
+    
+    if (lowerFileType === 'pdf') {
+        // PDF preview
+        const pdfFrame = document.getElementById('previewPdf');
+        if (pdfFrame) {
+            pdfFrame.src = filePath;
+            pdfFrame.onerror = function() {
+                pdfPreview.classList.add('d-none');
+                previewPlaceholder.classList.remove('d-none');
+                showMessage('Failed to load PDF preview', 'warning');
+            };
+            pdfPreview.classList.remove('d-none');
+        }
+    } else if (['jpg', 'jpeg', 'png', 'gif'].includes(lowerFileType)) {
+        // Image preview
+        const imgElement = document.getElementById('previewImage');
+        if (imgElement) {
+            imgElement.src = filePath;
+            imgElement.alt = fileName;
+            imgElement.onerror = function() {
+                imagePreview.classList.add('d-none');
+                previewPlaceholder.classList.remove('d-none');
+                showMessage('Failed to load image preview', 'warning');
+            };
+            imagePreview.classList.remove('d-none');
+        }
+    } else {
+        // Other file types - show placeholder
+        previewPlaceholder.classList.remove('d-none');
+        
+        // Update the placeholder icon based on file type
+        const placeholderIcon = previewPlaceholder.querySelector('.fa-file');
+        if (placeholderIcon) {
+            placeholderIcon.className = 'fas fa-5x mb-3 ';
+            
+            if (lowerFileType === 'docx' || lowerFileType === 'doc') {
+                placeholderIcon.className += 'fa-file-word text-primary';
+            } else if (lowerFileType === 'xlsx' || lowerFileType === 'xls') {
+                placeholderIcon.className += 'fa-file-excel text-success';
+            } else {
+                placeholderIcon.className += 'fa-file text-muted';
+            }
+        }
+    }
+    
+    // Alternative approach: Fetch file preview from server if needed
+    if (documentId && (lowerFileType === 'pdf' || ['jpg', 'jpeg', 'png', 'gif'].includes(lowerFileType))) {
+        const previewUrl = `/dashboard/preview/${documentId}`;
+        console.log(`Preview URL: ${previewUrl}`);
+        
+        // You can add AJAX call here if you need to fetch preview from server
+        // This is useful if you need to generate previews on-demand
+        // fetch(previewUrl)
+        //     .then(response => {
+        //         if (!response.ok) throw new Error('Failed to load preview');
+        //         return response;
+        //     })
+        //     .catch(error => {
+        //         console.error('Error loading preview:', error);
+        //         imagePreview.classList.add('d-none');
+        //         pdfPreview.classList.add('d-none');
+        //         previewPlaceholder.classList.remove('d-none');
+        //         showMessage('Failed to load preview', 'warning');
+        //     });
+    }
+    
+    // Show the modal
+    const bsModal = new bootstrap.Modal(modal);
+    bsModal.show();
+}
 </script>
 {% endblock %}
