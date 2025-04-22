@@ -196,26 +196,56 @@ def upload_json():
     logger.info("Upload request received from user %s", current_user.id)
     logger.debug("Files in request: %s", request.files)
     logger.debug("Form data: %s", request.form)
+    logger.debug("Form data keys: %s", list(request.form.keys()))
     
     try:
+    
         # Check if folder_id is specified
-        folder_id = request.form.get('folder_id')
+        folder_id = request.form.get('folder_id', '')
         folder = None
+        validated_folder_id = None  # This will hold the validated folder ID
         
-        if folder_id and folder_id.strip():
+        logger.debug("Raw folder_id from form: %r", folder_id)
+        
+        # Check for various empty/null values that could be sent from frontend
+        if folder_id and folder_id.strip() and folder_id.lower() not in ('null', 'undefined', '0', 'none'):
             try:
-                folder_id = int(folder_id)
-                folder = Folder.query.get(folder_id)
-                # Verify folder belongs to current user
-                if not folder or folder.user_id != current_user.id:
-                    response['message'] = 'Invalid folder selected'
-                    logger.warning("User %s attempted to upload to invalid folder %s", current_user.id, folder_id)
-                    return jsonify(response), 400
+                validated_folder_id = int(folder_id)
+                logger.debug("Converted folder_id to integer: %d", validated_folder_id)
+                
+                # If folder_id is 0, treat as None (root folder)
+                if validated_folder_id == 0:
+                    logger.debug("Folder ID is 0, treating as root folder (None)")
+                    validated_folder_id = None
+                else:
+                    # Only query the database if we have a positive folder ID
+                    folder = Folder.query.get(validated_folder_id)
+                    logger.debug("Queried folder from database: %s", folder)
+                    
+                    # Verify folder belongs to current user
+                    if not folder:
+                        response['message'] = 'Folder not found'
+                        logger.warning("Folder not found: %s", validated_folder_id)
+                        return jsonify(response), 400
+                    if folder.user_id != current_user.id:
+                        response['message'] = 'Invalid folder selected'
+                        logger.warning("User %s attempted to upload to invalid folder %s", current_user.id, validated_folder_id)
+                        return jsonify(response), 400
+                    
+                    # Ensure the physical folder exists
+                    folder_path = Path(current_app.root_path) / 'static' / 'uploads' / str(validated_folder_id)
+                    logger.info("Ensuring folder exists: %s", folder_path)
+                    try:
+                        folder_path.mkdir(parents=True, exist_ok=True)
+                    except Exception as e:
+                        logger.error("Failed to create folder directory: %s", str(e))
+                        response['message'] = 'Failed to create folder directory'
+                        return jsonify(response), 500
             except ValueError:
+                response['message'] = 'Invalid folder ID format'
                 response['message'] = 'Invalid folder ID format'
                 logger.warning("Invalid folder ID format: %s", folder_id)
                 return jsonify(response), 400
-        
         # Check if the post request has the file part
         if 'files[]' not in request.files:
             response['message'] = 'No file part in the request'
@@ -255,12 +285,19 @@ def upload_json():
                     # Continue without hash check if there's an error
                 try:
                     # Create a new document
+                    # Create a new document
+                    logger.debug("Creating document with folder_id=%r", validated_folder_id)
                     document = Document(
                         user_id=current_user.id,
-                        folder_id=folder_id if folder else None,
+                        folder_id=validated_folder_id,  # Use our validated folder_id
                         description=request.form.get('description', '')
                     )
                     
+                    # Log the folder info before saving
+                    if validated_folder_id:
+                        logger.debug("Using folder: %s (ID: %s)", 
+                                    folder.name if folder else "Unknown", 
+                                    validated_folder_id)
                     # Save the file and update document properties using validation
                     document.save_file(file)
                     
@@ -284,7 +321,14 @@ def upload_json():
                         "Successfully processed file %s for user %s in folder %s",
                         file.filename,
                         current_user.id,
-                        folder_id if folder else "root"
+                        validated_folder_id if validated_folder_id else "root"
+                    )
+                    
+                    # Additional debug information about file path
+                    logger.debug(
+                        "File saved with path: %s, folder_id: %s", 
+                        document.file_path, 
+                        document.folder_id
                     )
                 except ValueError as e:
                     # Validation error
@@ -312,7 +356,7 @@ def upload_json():
                     "User %s successfully uploaded %d files to folder %s", 
                     current_user.id, 
                     len(uploaded_files), 
-                    folder_id if folder else "root"
+                    validated_folder_id if validated_folder_id else "root"
                 )
                 
                 return jsonify(response), 200
@@ -400,6 +444,7 @@ def get_folder_name_json():
             'success': False,
             'message': f'Server error: {str(e)}'
         }), 500
+    
 @dashboard.route('/create_folder_json', methods=['POST'])
 @login_required
 def create_folder_json():
@@ -411,6 +456,9 @@ def create_folder_json():
     }
     
     try:
+        # Log the form data for debugging
+        logger.debug("Create folder form data: %s", request.form)
+        
         folder_name = request.form.get('folder_name')
         parent_id = request.form.get('parent_id')
         
@@ -446,6 +494,16 @@ def create_folder_json():
         db.session.add(new_folder)
         db.session.commit()
         
+        # Create the physical folder if it doesn't exist
+        folder_path = Path(current_app.root_path) / 'static' / 'uploads' / str(new_folder.id)
+        logger.info("Creating physical folder: %s", folder_path)
+        
+        try:
+            folder_path.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.error("Failed to create physical folder: %s", str(e))
+            # Continue anyway as the database record was created
+        
         # Log success
         logger.info("User %s created folder '%s' with parent_id %s", 
                   current_user.id, folder_name, parent_id if parent_id and parent_id.strip() else "None")
@@ -463,7 +521,6 @@ def create_folder_json():
     except Exception as e:
         db.session.rollback()
         logger.error("Unexpected error in create_folder_json: %s", str(e), exc_info=True)
-        response['message'] = f'Server error: {str(e)}'
         response['message'] = f'Server error: {str(e)}'
         return jsonify(response), 500
 
