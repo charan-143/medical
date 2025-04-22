@@ -602,7 +602,7 @@ def get_content_type(file_path):
 @login_required
 def preview_document(document_id):
     """
-    Secure route to preview a document.
+    Secure route to preview a document with support for range requests.
     
     Args:
         document_id: ID of the document to preview
@@ -618,46 +618,115 @@ def preview_document(document_id):
             abort(403)
         
         # Get and validate file path
-        file_path = get_secure_file_path(document)
+        file_path = document.get_file_path()
         if not file_path or not file_path.exists():
-            logger.error(f"File not found for document {document_id}")
+            logger.error(f"File not found for document {document_id}: {file_path}")
             abort(404)
         
+        # Verify the file is within the allowed uploads directory
+        uploads_dir = Path(current_app.root_path) / 'static' / 'uploads'
+        if not str(file_path.resolve()).startswith(str(uploads_dir.resolve())):
+            logger.warning(f"Path traversal attempt detected: {file_path}")
+            abort(403)
+            
         # Determine content type and previewability
-        content_type, is_previewable = get_content_type(file_path)
+        file_extension = file_path.suffix.lower().lstrip('.')
+        allowed_preview_extensions = {'pdf', 'jpg', 'jpeg', 'png', 'gif'}
         
-        if not is_previewable:
-            logger.info(f"Non-previewable file type {content_type} for document {document_id}")
+        # Check if file extension is in allowed list
+        if file_extension not in allowed_preview_extensions:
+            logger.info(f"Non-previewable file type {file_extension} for document {document_id}")
             return jsonify({
                 'success': False,
                 'message': 'This file type cannot be previewed'
             }), 400
+            
+        # Use mimetypes library for content type detection
+        content_type, encoding = mimetypes.guess_type(str(file_path))
+        if not content_type:
+            # Fallback to common types if not detected
+            extension_to_mime = {
+                'pdf': 'application/pdf',
+                'jpg': 'image/jpeg',
+                'jpeg': 'image/jpeg',
+                'png': 'image/png',
+                'gif': 'image/gif'
+            }
+            content_type = extension_to_mime.get(file_extension, 'application/octet-stream')
         
-        # Prepare response with appropriate headers
-        response = make_response(send_file(
-            file_path,
-            mimetype=content_type,
-            as_attachment=False,
-            download_name=document.original_filename
-        ))
+        # Check for range request (important for PDFs)
+        range_header = request.headers.get('Range', None)
         
-        # Set security headers
-        response.headers['Content-Security-Policy'] = "default-src 'self'"
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        
-        # Set cache control headers
-        response.headers['Cache-Control'] = 'no-store, must-revalidate'
-        response.headers['Pragma'] = 'no-cache'
-        response.headers['Expires'] = '0'
-        
-        # Log successful preview
-        logger.info(f"Successfully served preview for document {document_id} of type {content_type}")
+        if range_header:
+            # Handle range request for PDFs and large files
+            file_size = file_path.stat().st_size
+            
+            # Parse the range header
+            byte_range = range_header.replace('bytes=', '').split('-')
+            start_byte = int(byte_range[0]) if byte_range[0] else 0
+            
+            # Handle open-ended ranges (e.g., "bytes=1000-")
+            if len(byte_range) > 1 and byte_range[1]:
+                end_byte = min(int(byte_range[1]), file_size - 1)
+            else:
+                end_byte = file_size - 1
+                
+            # Calculate the length of the content
+            content_length = end_byte - start_byte + 1
+            
+            # Read the requested range from the file
+            with open(file_path, 'rb') as f:
+                f.seek(start_byte)
+                data = f.read(content_length)
+            
+            # Create the response with the appropriate headers
+            response = make_response(data)
+            response.headers.add('Content-Type', content_type)
+            response.headers.add('Accept-Ranges', 'bytes')
+            response.headers.add('Content-Range', f'bytes {start_byte}-{end_byte}/{file_size}')
+            response.headers.add('Content-Length', str(content_length))
+            response.status_code = 206  # Partial Content
+            
+            # Set security headers
+            response.headers['Content-Security-Policy'] = "default-src 'self'"
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+            
+            logger.info(f"Served partial content for document {document_id} ({start_byte}-{end_byte}/{file_size})")
+            
+        else:
+            # Standard request - serve the whole file
+            response = make_response(send_file(
+                file_path,
+                mimetype=content_type,
+                as_attachment=False,
+                download_name=document.original_filename,
+                conditional=True  # Enable conditional responses based on If-Modified-Since
+            ))
+            
+            # Add content disposition header to help browser handle the file
+            response.headers.add('Content-Disposition', f'inline; filename="{document.original_filename}"')
+            
+            # Set security headers
+            response.headers['Content-Security-Policy'] = "default-src 'self'"
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+            
+            # Set cache control headers - allow caching for better performance
+            # Use ETag for cache validation instead of no-store
+            response.headers['Cache-Control'] = 'private, max-age=3600'
+            
+            # Enable Accept-Ranges for this file
+            response.headers['Accept-Ranges'] = 'bytes'
+            
+            logger.info(f"Successfully served preview for document {document_id} of type {content_type}")
         
         return response
         
     except Exception as e:
         logger.error(f"Error previewing document {document_id}: {str(e)}", exc_info=True)
-        abort(500)
+        return jsonify({
+            'success': False,
+            'message': 'Error loading preview'
+        }), 500
 
 @dashboard.after_request
 def after_request(response):
