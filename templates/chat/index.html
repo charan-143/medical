@@ -182,9 +182,6 @@ endblock %} {% block styles %}
 	}
 
 	/* Update message styles for new structure */
-	.message-user {
-		flex-direction: row-reverse; /* Avatar on right for user */
-	}
 
 	.message-timestamp {
 		font-size: var(--font-size-xs, 0.75rem);
@@ -668,7 +665,7 @@ endblock %} {% block styles %}
 	<img src="" alt="Full size image" />
 </div>
 
-{% block scripts %}
+{% endblock %} {% block scripts %}
 <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
 <script>
@@ -718,20 +715,20 @@ endblock %} {% block styles %}
 			chatInput.addEventListener("keydown", function (e) {
 				if (e.key === "Enter" && !e.shiftKey) {
 					e.preventDefault();
-	       // Connect to socket
-	       socket.on('connect', () => {
-	           console.log('Connected to chat server');
-	           // This will log to console but won't display in UI
-	       });
+					// Submit the form programmatically
+					if (chatForm) {
+						chatForm.dispatchEvent(new Event("submit"));
+					}
+				}
+			});
+		}
 
-	       // Disconnect from socket
-	       socket.on('disconnect', () => {
-	           console.log('Disconnected from chat server');
-	           // No UI message shown
-	       });
-					behavior: "smooth",
-				});
-			}
+		// Function to smooth scroll to bottom of chat
+		function smoothScrollToBottom() {
+			chatMessages.scrollTo({
+				top: chatMessages.scrollHeight,
+				behavior: "smooth",
+			});
 		}
 
 		// ----------------------------------------
@@ -741,13 +738,13 @@ endblock %} {% block styles %}
 		// Connect to socket
 		socket.on("connect", () => {
 			console.log("Connected to chat server");
-			 // This will log to console but won't display in UI
+			// This will log to console but won't display in UI
 		});
 
 		// Disconnect from socket
 		socket.on("disconnect", () => {
 			console.log("Disconnected from chat server");
-			 // No UI message shown
+			// No UI message shown
 		});
 
 		// Receive message
@@ -1001,7 +998,10 @@ endblock %} {% block styles %}
 
 						// Wrap lists in ul tags
 						if (formattedMessage.includes("<li>")) {
-							formattedMessage = formattedMessage.replace(/(<li>.*?<\/li>)/gs, "<ul>$1</ul>");
+							formattedMessage = formattedMessage.replace(
+								/(<li>.*?<\/li>)/gs,
+								"<ul>$1</ul>"
+							);
 						}
 
 						contentDiv.innerHTML = formattedMessage;
