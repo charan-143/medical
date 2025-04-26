@@ -108,7 +108,9 @@ def process_pdf_file(file):
         # Extract text from all pages
         for page_num in range(len(pdf_reader.pages)):
             page = pdf_reader.pages[page_num]
-            text_content += page.extract_text() + "\n"
+            page_text = page.extract_text()
+            if page_text is not None:
+                text_content += page_text + "\n"
         
         return {
             'type': 'text',
