@@ -7,7 +7,13 @@ import html
 import re
 import asyncio
 import logging
-
+import os
+import base64
+import io
+from werkzeug.utils import secure_filename
+from PIL import Image
+import PyPDF2
+import mimetypes
 from app import socketio
 from functools import wraps
 chat = Blueprint('chat', __name__, template_folder='templates')
@@ -63,8 +69,73 @@ def get_user_conversation(user_id):
         conversation_history[user_id] = []
     return conversation_history[user_id]
 
+# Utility functions for file processing
+def allowed_file(filename):
+    """Check if the uploaded file has an allowed extension."""
+    ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg'}
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def process_image_file(file):
+    """Process image file for Gemini model input."""
+    try:
+        # Open and resize the image if necessary
+        image = Image.open(file)
+        
+        # Convert to bytes
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format=image.format or 'PNG')
+        img_bytes = img_byte_arr.getvalue()
+        
+        # Get MIME type
+        mime_type = mimetypes.guess_type(file.filename)[0] or 'image/jpeg'
+        
+        # Return the processed image data
+        return {
+            'mime_type': mime_type,
+            'data': base64.b64encode(img_bytes).decode('utf-8'),
+            'type': 'image'
+        }
+    except Exception as e:
+        logging.error(f"Error processing image: {str(e)}")
+        raise
+
+def process_pdf_file(file):
+    """Extract text from PDF file for Gemini model."""
+    try:
+        pdf_reader = PyPDF2.PdfReader(file)
+        text_content = ""
+        
+        # Extract text from all pages
+        for page_num in range(len(pdf_reader.pages)):
+            page = pdf_reader.pages[page_num]
+            page_text = page.extract_text()
+            if page_text is not None:
+                text_content += page_text + "\n"
+        
+        return {
+            'type': 'text',
+            'data': text_content
+        }
+    except Exception as e:
+        logging.error(f"Error processing PDF file: {str(e)}")
+        raise
+
+def process_file_for_gemini(file):
+    """Process file based on its type for Gemini model input."""
+    if not file or not allowed_file(file.filename):
+        raise ValueError("Invalid or unsupported file type")
+    
+    file_extension = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+    
+    if file_extension in ['png', 'jpg', 'jpeg']:
+        return process_image_file(file)
+    elif file_extension == 'pdf':
+        return process_pdf_file(file)
+    else:
+        raise ValueError(f"Unsupported file type: {file_extension}")
+
 # Generate response from Gemini
-def generate_gemini_response(prompt, user_id):
+def generate_gemini_response(prompt, user_id, file_content=None):
     try:
         # Get conversation history for this user
         conversation = get_user_conversation(user_id)
@@ -72,8 +143,31 @@ def generate_gemini_response(prompt, user_id):
         # For first message in a new conversation, we'll include instructions in the prompt itself
         is_first_message = len(conversation) == 0
         
+        # Prepare message parts
+        message_parts = []
+        
+        # Add text prompt
+        message_parts.append(prompt)
+        
+        # Add file content if provided
+        if file_content:
+            if file_content['type'] == 'image':
+                # For images, add as inline image part
+                message_parts.append({
+                    "inline_data": {
+                        "mime_type": file_content['mime_type'],
+                        "data": file_content['data']
+                    }
+                })
+            else:
+                # For text (e.g., from PDFs), include in the prompt
+                # We limit content length to avoid token limits
+                content_preview = file_content['data'][:2000] + "..." if len(file_content['data']) > 2000 else file_content['data']
+                message_parts.append("File content:\n" + content_preview)
+        
         # Add the user's message to the conversation
-        conversation.append({"role": "user", "parts": [prompt]})
+        conversation.append({"role": "user", "parts": message_parts})
+        
         # Initialize the Gemini model
         model = genai.GenerativeModel(
             model_name="gemini-2.0-flash",
@@ -112,12 +206,15 @@ def generate_gemini_response(prompt, user_id):
                 MEDICAL_ASSISTANT_INSTRUCTIONS + "\n\nUser query: " + prompt
             )
         else:
-            response = chat.send_message(prompt)
+            # For messages with file content, we send the full message parts
+            if file_content:
+                response = chat.send_message(message_parts)
+            else:
+                response = chat.send_message(prompt)
         
         # Extract the response text
         response_text = response.text
         
-        # Add AI's response to conversation history
         # Add AI's response to conversation history
         conversation.append({"role": "model", "parts": [response_text]})
         
@@ -196,7 +293,7 @@ def handle_message(data):
 @chat.route('/upload', methods=['POST'])
 @login_required
 def upload_to_chat():
-    """Handle file uploads to the chat"""
+    """Handle file uploads to the chat and process with Gemini 2.0 flash model"""
     if 'file' not in request.files:
         return jsonify({'success': False, 'error': 'No file provided'}), 400
     
@@ -204,26 +301,47 @@ def upload_to_chat():
     if file.filename == '':
         return jsonify({'success': False, 'error': 'No file selected'}), 400
     
-    # Check file type
-    allowed_extensions = current_app.config.get('ALLOWED_EXTENSIONS', {'pdf', 'png', 'jpg', 'jpeg'})
-    if not '.' in file.filename or file.filename.rsplit('.', 1)[1].lower() not in allowed_extensions:
-        return jsonify({'success': False, 'error': 'File type not allowed'}), 400
+    # Ensure filename is secure
+    filename = secure_filename(file.filename)
     
-    # For now, just acknowledge receipt - future implementation will process the file
-    file_info = {
-        'name': file.filename,
-        'type': file.content_type,
-        'size': len(file.read())
-    }
-    
-    # Simple file analysis message
-    analysis = f"I've received your file '{file.filename}'. In a future update, I'll be able to analyze its contents."
-    
-    return jsonify({
-        'success': True, 
-        'file': file_info,
-        'analysis': analysis
-    })
+    try:
+        # Process the file for Gemini model
+        processed_file = process_file_for_gemini(file)
+        
+        # Get user ID for conversation
+        user_id = str(current_user.id)
+        
+        # Store file info
+        file_info = {
+            'name': filename,
+            'type': file.content_type,
+            'file_type': processed_file['type']
+        }
+        
+        # Create a prompt based on the file type
+        if processed_file['type'] == 'image':
+            prompt = f"Please analyze this medical image and provide insights. The image is named '{filename}'."
+            file_analysis = generate_gemini_response(prompt, user_id, processed_file)
+        else:  # PDF text content
+            prompt = f"Please analyze this medical document and provide key insights. The document is named '{filename}'."
+            file_analysis = generate_gemini_response(prompt, user_id, processed_file)
+        
+        return jsonify({
+            'success': True, 
+            'file': file_info,
+            'analysis': file_analysis
+        })
+        
+    except ValueError as ve:
+        # Handle validation errors
+        return jsonify({'success': False, 'error': str(ve)}), 400
+    except Exception as e:
+        # Log and handle other errors
+        logging.error(f"Error processing file upload: {str(e)}")
+        return jsonify({
+            'success': False, 
+            'error': 'An error occurred while processing your file. Please try again.'
+        }), 500
 
 @chat.route('/transcribe', methods=['POST'])
 @login_required
