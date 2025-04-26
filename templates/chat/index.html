@@ -597,6 +597,8 @@ endblock %} {% block styles %}
 
 	<div class="chat-input-area">
 		<form id="chatForm">
+			<!-- Hidden CSRF token field -->
+			<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 			<div class="chat-input-container">
 				<textarea
 					class="chat-textarea"
@@ -1087,18 +1089,21 @@ endblock %} {% block styles %}
 				type: "file",
 				fileName: file.name,
 				fileSize: file.size,
-				fileType: file.type,
+				fileType: file.type
 			};
 
 			addMessage(JSON.stringify(fileData), "user");
 
+			// Add CSRF token to form data
+			formData.append("csrf_token", document.querySelector('input[name="csrf_token"]').value);
+			
 			// Show AI thinking
 			showAIThinking();
 
 			// Upload the file to the server
 			fetch("/chat/upload", {
 				method: "POST",
-				body: formData,
+				body: formData
 			})
 				.then((response) => {
 					if (!response.ok) {
@@ -1200,6 +1205,7 @@ endblock %} {% block styles %}
 			// Create form data
 			const formData = new FormData();
 			formData.append("audio", audioBlob, "recording.wav");
+			formData.append("csrf_token", document.querySelector('input[name="csrf_token"]').value);
 
 			// Show AI thinking
 			showAIThinking();
@@ -1208,7 +1214,7 @@ endblock %} {% block styles %}
 			// Send to server
 			fetch("/chat/transcribe", {
 				method: "POST",
-				body: formData,
+				body: formData
 			})
 				.then((response) => {
 					if (!response.ok) {
