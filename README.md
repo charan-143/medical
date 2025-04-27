@@ -28,6 +28,8 @@ A comprehensive web-based medical dashboard application for managing medical rec
 
 ## Installation
 
+This application requires Python 3.8 or higher.
+
 1. Clone the repository:
    ```
    git clone https://github.com/charan-143/medical.git
@@ -48,6 +50,10 @@ A comprehensive web-based medical dashboard application for managing medical rec
    pip install -r requirements.txt
    ```
 
+4. Install wkhtmltopdf (required for PDF generation):
+   - **Windows**: Download and install from [wkhtmltopdf.org](https://wkhtmltopdf.org/downloads.html)
+   - **macOS**: `brew install wkhtmltopdf`
+   - **Linux**: `sudo apt-get install wkhtmltopdf` (Ubuntu/Debian) or equivalent for your distribution
 ## Setup and Configuration
 
 1. Create a `.env` file in the project root and add the necessary environment variables:
@@ -60,9 +66,17 @@ A comprehensive web-based medical dashboard application for managing medical rec
 
 2. Initialize the database:
    ```
-   flask run
+   flask db init
+   flask db migrate -m "Initial migration"
+   flask db upgrade
    ```
-   The application will automatically create the database and an admin user on first run.
+   The application will create the database and tables based on the models.
+
+3. Create the initial admin user:
+   ```
+   flask create-admin
+   ```
+   This will create an admin user with the default credentials listed below.
 
 3. Default admin credentials:
    - Username: admin
@@ -101,6 +115,41 @@ A comprehensive web-based medical dashboard application for managing medical rec
 - **templates/**: HTML templates
 - **instance/**: Instance-specific files, including the SQLite database
 - **migrations/**: Database migration scripts
+
+
+## Development
+
+### Environment Setup
+
+1. Follow the installation steps above to set up your development environment.
+2. Use the development server for local testing:
+   ```
+   flask run --debug
+   ```
+
+### Code Style
+
+- Follow PEP 8 style guidelines for Python code
+- Use docstrings to document functions and classes
+- Run linting before submitting pull requests:
+  ```
+  flake8 .
+  ```
+
+### Database Migrations
+
+When changing models, create new migrations:
+```
+flask db migrate -m "Description of changes"
+flask db upgrade
+```
+
+### Testing
+
+Run the test suite before submitting changes:
+```
+pytest
+```
 
 ## License
 
