@@ -267,44 +267,60 @@ class FolderSummary(db.Model):
             text_prompt = f"""
             Generate a comprehensive medical analysis of the contents in folder "{folder_name}". I'll provide all medical documents and images as context.
             
-            Please analyze all content and structure your response as follows (within 200-300 words):
+            Please analyze all content and structure your response as follows (within 300-400 words):
             
             1. MEDICAL SUMMARY
-               - List key medical conditions, diagnoses, and ongoing treatments
-               - Highlight any critical or abnormal values from lab reports
+               - List key medical conditions, diagnoses, and ongoing treatments in a table format:
+                 | Condition/Diagnosis | Status | Treatment | Provider |
+                 | ------------------ | ------ | --------- | -------- |
+               - Highlight any critical or abnormal values from lab reports in a clear table:
+                 | Test | Result | Normal Range | Status | Date |
+                 | ---- | ------ | ------------ | ------ | ---- |
                - Note significant findings from imaging studies
-               - Identify any urgent medical concerns or red flags
+               - Identify any urgent medical concerns or red flags (❗ for critical issues)
             
             2. CHRONOLOGICAL TIMELINE
-               - Document progression of medical events
-               - Track changes in vital signs or test results over time
-               - Note significant treatment changes or interventions
+               - Document progression of medical events in a structured timeline:
+                 ```
+                 [Date] - Event/Procedure/Diagnosis
+                 [Date] - Event/Procedure/Diagnosis
+                 ```
+               - Include a visual representation of key vital signs trends where available:
+                 | Date | BP | HR | Temp | Weight | Other |
+                 | ---- | -- | -- | ---- | ------ | ----- |
+               - Note significant treatment changes or interventions with clear markers
             
             3. CROSS-DOCUMENT ANALYSIS
-               - Correlate findings between different medical reports
-               - Compare current results with previous baselines
+               - Correlate findings between different medical reports in a comparison table
+               - Compare current results with previous baselines showing trends:
+                 | Measure | Previous | Current | Change | Significance |
+                 | ------- | -------- | ------- | ------ | ------------ |
                - Identify trends or patterns across documents
                - Link related findings from different specialists/visits
             
             4. IMAGE ANALYSIS
                For medical imaging (X-rays, MRI, CT scans, etc.):
-               - Describe key anatomical findings
-               - Note any abnormalities or significant changes
-               - Compare with previous imaging if available
-               - Highlight areas requiring follow-up
+               - Describe key anatomical findings in bulleted lists
+               - Note any abnormalities or significant changes with anatomical references
+               - Compare with previous imaging if available using side-by-side descriptions
+               - Highlight areas requiring follow-up with specific recommendations
             
             5. RECOMMENDATIONS & FOLLOW-UP
-               - List pending tests or scheduled procedures
+               - Create a structured follow-up schedule:
+                 | Test/Procedure | Due Date | Provider | Priority |
+                 | -------------- | -------- | -------- | -------- |
                - Document recommended follow-up appointments
-               - Note any specific monitoring requirements
-               - Highlight preventive care measures
+               - Note any specific monitoring requirements with frequency
+               - Highlight preventive care measures with clear timeframes
             
             6. TECHNICAL TERMS
-               - Define any complex medical terminology used
-               - Explain abbreviations and technical measurements
+               - Define complex medical terminology in a glossary table:
+                 | Term | Definition | Context |
+                 | ---- | ---------- | ------- |
+               - Explain abbreviations and technical measurements 
                - Clarify medical jargon in plain language
             
-            IMPORTANT: Prioritize clinically significant findings and abnormal results. If critical values or urgent findings are present, highlight these at the beginning of the summary.
+            IMPORTANT: Prioritize clinically significant findings and abnormal results. If critical values or urgent findings are present, highlight these at the beginning of the summary with ⚠️ URGENT ATTENTION REQUIRED markers.
             """
             
             # Prepare content parts for the API call - starting with the text prompt
