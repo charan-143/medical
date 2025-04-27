@@ -28,6 +28,16 @@ You are a medical assistant AI. Your role is to:
 2. Help users understand medical terms and conditions
 3. Suggest when users should seek professional medical advice
 
+FORMATTING INSTRUCTIONS:
+Always format your responses using Markdown syntax:
+- Use headers (# for main title, ## for sections, ### for subsections)
+- Use bullet points and numbered lists for organized information
+- Use **bold text** for emphasis on important points
+- Use *italics* for medical terms being defined
+- Use `code blocks` for specific medical terminology definitions
+- Use appropriate markdown formatting for any tables or structured data
+- Create clear visual hierarchy with proper spacing and organization
+
 Important guidelines:
 - You CANNOT provide specific medical diagnosis or treatment recommendations
 - Always clarify that your responses are for educational purposes only
@@ -146,8 +156,11 @@ def generate_gemini_response(prompt, user_id, file_content=None):
         # Prepare message parts
         message_parts = []
         
-        # Add text prompt
-        message_parts.append(prompt)
+        # Add markdown formatting instruction to the prompt
+        markdown_instruction = "\n\nPlease format your response using Markdown syntax with appropriate headers, lists, emphasis, and other formatting elements."
+        
+        # Add text prompt with markdown instruction
+        message_parts.append(prompt + markdown_instruction)
         
         # Add file content if provided
         if file_content:
@@ -203,14 +216,14 @@ def generate_gemini_response(prompt, user_id, file_content=None):
         # If this is the first message, include medical instructions
         if is_first_message:
             response = chat.send_message(
-                MEDICAL_ASSISTANT_INSTRUCTIONS + "\n\nUser query: " + prompt
+                MEDICAL_ASSISTANT_INSTRUCTIONS + "\n\nUser query: " + prompt + markdown_instruction
             )
         else:
             # For messages with file content, we send the full message parts
             if file_content:
                 response = chat.send_message(message_parts)
             else:
-                response = chat.send_message(prompt)
+                response = chat.send_message(prompt + markdown_instruction)
         
         # Extract the response text
         response_text = response.text
@@ -226,8 +239,8 @@ def generate_gemini_response(prompt, user_id, file_content=None):
     
     except Exception as e:
         logging.error(f"Error generating Gemini response: {str(e)}")
-        # Return a friendly error message
-        return "I'm sorry, I'm having trouble processing your request right now. Please try again in a moment."
+        # Return a friendly error message in markdown format
+        return "## Error\n\nI'm sorry, I'm having trouble processing your request right now. Please try again in a moment."
 @chat.route('/')
 @login_required
 def index():
@@ -289,7 +302,7 @@ def handle_message(data):
     
     except Exception as e:
         logging.error(f"Error in chat message handling: {str(e)}")
-        emit('response', {'data': 'I apologize, but I encountered an issue processing your message. Please try again.'})
+        emit('response', {'data': '## Error\n\nI apologize, but I encountered an issue processing your message. Please try again.'})
 @chat.route('/upload', methods=['POST'])
 @login_required
 def upload_to_chat():
@@ -320,10 +333,10 @@ def upload_to_chat():
         
         # Create a prompt based on the file type
         if processed_file['type'] == 'image':
-            prompt = f"Please analyze this medical image and provide insights. The image is named '{filename}'."
+            prompt = f"Please analyze this medical image and provide insights. The image is named '{filename}'. Organize your analysis with clear sections using markdown headers and lists."
             file_analysis = generate_gemini_response(prompt, user_id, processed_file)
         else:  # PDF text content
-            prompt = f"Please analyze this medical document and provide key insights. The document is named '{filename}'."
+            prompt = f"Please analyze this medical document and provide key insights. The document is named '{filename}'. Organize your analysis with clear sections using markdown headers and lists."
             file_analysis = generate_gemini_response(prompt, user_id, processed_file)
         
         return jsonify({
