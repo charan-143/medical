@@ -18,4 +18,7 @@ eventlet==0.33.3
 pymongo==4.5.0
 gunicorn==21.2.0
 python-magic==0.4.27
-
+flask-session
+PyPDF2
+PyMuPDF
+markdown
