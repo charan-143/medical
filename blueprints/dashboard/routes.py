@@ -1,7 +1,7 @@
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, current_app, send_file, abort, make_response
 from flask_login import login_required, current_user
 from extensions import db
-from models import Folder, Document
+from models import Folder, Document, FolderSummary
 import os
 import uuid
 import logging
@@ -34,6 +34,37 @@ def overview():
 def records(folder_id=None):
     """Display medical records organized in folders"""
     try:
+        # Check if a specific document is being viewed
+        document_id = request.args.get('view_document')
+        processed_images = None
+        viewing_document = None
+        
+        if document_id:
+            try:
+                # Get the document and verify ownership
+                document_id = int(document_id)
+                viewing_document = Document.query.get(document_id)
+                
+                if not viewing_document or viewing_document.user_id != current_user.id:
+                    flash('Access denied: You do not have permission to view this document', 'error')
+                    return redirect(url_for('dashboard.records', folder_id=folder_id))
+                
+                # If it's a PDF, process its images with Gemini
+                if viewing_document.file_type.lower() == 'pdf':
+                    current_app.logger.info(f"Processing PDF images for document {document_id}")
+                    processing_result = viewing_document.process_pdf_images()
+                    
+                    if processing_result['success']:
+                        processed_images = processing_result['results']
+                        if not processed_images:
+                            current_app.logger.info(f"No images found in PDF document {document_id}")
+                    else:
+                        current_app.logger.error(f"Error processing PDF images: {processing_result['message']}")
+                        flash(f"Error processing PDF images: {processing_result['message']}", 'warning')
+            except Exception as doc_err:
+                current_app.logger.error(f"Error processing document {document_id}: {str(doc_err)}", exc_info=True)
+                flash('Error processing document', 'error')
+        
         # Get subfolders and documents to display
         if folder_id:
             # If folder_id is provided, get that specific folder
@@ -54,6 +85,36 @@ def records(folder_id=None):
             
             # Debug logging
             current_app.logger.debug(f"Current folder: {current_folder.name} (ID: {folder_id})")
+            
+            # Get or generate AI summary if we're in a specific folder
+            folder_summary = None
+            summary_last_updated = None
+            
+            # Check if auto-generation is requested
+            auto_generate = request.args.get('generate_summary', 'false').lower() == 'true'
+            
+            try:
+                # Only process summary if there are documents or forced generation
+                if documents or auto_generate:
+                    if auto_generate:
+                        # Force regeneration of summary
+                        current_app.logger.info(f"Forcing regeneration of summary for folder {folder_id}")
+                        folder_summary = FolderSummary.generate_summary(folder_id)
+                    else:
+                        # Get existing summary or generate if needed
+                        folder_summary = FolderSummary.get_or_generate_summary(folder_id)
+                    
+                    # Get the updated summary record
+                    summary_record = FolderSummary.query.filter_by(folder_id=folder_id).first()
+                    if summary_record:
+                        summary_last_updated = summary_record.last_updated
+                else:
+                    folder_summary = "This folder is empty."
+                
+                current_app.logger.debug(f"Summary for folder {folder_id}: {folder_summary[:100]}...")
+            except Exception as e:
+                current_app.logger.error(f"Error getting folder summary: {str(e)}")
+                folder_summary = "Error generating summary."
         else:
             current_folder = None
             subfolders = Folder.query.filter_by(
@@ -67,6 +128,10 @@ def records(folder_id=None):
             ).order_by(Document.upload_date.desc()).all()
             
             current_app.logger.debug("Displaying root folder")
+            
+            # No summary for root folder
+            folder_summary = None
+            summary_last_updated = None
 
         # Debug logging for subfolders and documents
         current_app.logger.debug(f"Found {len(subfolders)} subfolders:")
@@ -100,15 +165,7 @@ def records(folder_id=None):
         current_app.logger.debug(f"  Subfolders count: {len(subfolders)}")
         current_app.logger.debug(f"  Documents count: {len(documents)}")
         
-        # Create context dictionary
-        context = {
-            'current_folder': current_folder,
-            'folder_path': folder_path,
-            'subfolders': subfolders,
-            'documents': documents
-        }
-        
-        # Validate and fix document paths before rendering
+        # Validate and fix document paths before creating context
         if documents:
             for doc in documents:
                 # Validate and fix paths if needed
@@ -116,6 +173,18 @@ def records(folder_id=None):
                 url_path = doc.get_url_path()
                 file_exists = doc.get_file_path().exists() if doc.get_file_path() else False
                 logger.debug(f"Document {doc.original_filename}: URL={url_path}, exists={file_exists}")
+
+        # Create context dictionary
+        context = {
+            'current_folder': current_folder,
+            'folder_path': folder_path,
+            'subfolders': subfolders,
+            'documents': documents,
+            'folder_summary': folder_summary,
+            'summary_last_updated': summary_last_updated,
+            'viewing_document': viewing_document,
+            'processed_images': processed_images
+        }
         
         return render_template('dashboard/records.html', **context)
                           
@@ -243,7 +312,6 @@ def upload_json():
                         return jsonify(response), 500
             except ValueError:
                 response['message'] = 'Invalid folder ID format'
-                response['message'] = 'Invalid folder ID format'
                 logger.warning("Invalid folder ID format: %s", folder_id)
                 return jsonify(response), 400
         # Check if the post request has the file part
@@ -261,8 +329,7 @@ def upload_json():
         
         # Track uploads for response
         uploaded_files = []
-        # Use a set to track processed filenames and prevent duplicates
-        # Use a set to track processed filenames and prevent duplicates
+        # Use sets to track processed filenames and hashes to prevent duplicates
         processed_files = set()
         processed_hashes = set()
         
@@ -284,7 +351,6 @@ def upload_json():
                     logger.warning("Error computing hash for file %s: %s", file.filename, str(e))
                     # Continue without hash check if there's an error
                 try:
-                    # Create a new document
                     # Create a new document
                     logger.debug("Creating document with folder_id=%r", validated_folder_id)
                     document = Document(
@@ -342,7 +408,6 @@ def upload_json():
                     response['message'] = f'Error uploading {file.filename}: {str(e)}'
                     return jsonify(response), 500
         
-        # Commit all successful uploads
         # Commit all successful uploads
         if uploaded_files:
             try:
@@ -474,23 +539,31 @@ def create_folder_json():
         )
         
         # If parent_id is provided, set the parent folder
-        if parent_id and parent_id.strip():
+        stripped_parent_id = parent_id.strip() if parent_id else ""
+        if stripped_parent_id:
             try:
-                parent_id = int(parent_id)
-                parent_folder = Folder.query.get(parent_id)
-                if parent_folder and parent_folder.user_id == current_user.id:
-                    new_folder.parent_id = parent_id
-                else:
-                    logger.warning("User %s attempted to create folder in invalid parent folder %s", 
-                                 current_user.id, parent_id)
-                    response['message'] = 'Invalid parent folder'
-                    return jsonify(response), 400
+                parsed_parent_id = int(stripped_parent_id)
             except ValueError:
-                logger.warning("Invalid parent folder ID format: %s", parent_id)
-                response['message'] = 'Invalid parent folder ID'
+                logger.warning("Invalid parent folder ID format: %s", stripped_parent_id)
+                response['message'] = 'Invalid parent folder ID format'
                 return jsonify(response), 400
-        
-        # Save to database
+                
+            # After converting to int, check if folder exists and belongs to user
+            parent_folder = Folder.query.get(parsed_parent_id)
+            if not parent_folder:
+                logger.warning("User %s attempted to create folder in non-existent parent folder %s", 
+                             current_user.id, parsed_parent_id)
+                response['message'] = 'Parent folder not found'
+                return jsonify(response), 404
+                
+            if parent_folder.user_id != current_user.id:
+                logger.warning("User %s attempted to create folder in unauthorized parent folder %s", 
+                             current_user.id, parsed_parent_id)
+                response['message'] = 'You do not have permission to use this parent folder'
+                return jsonify(response), 403
+                
+            # If we get here, the parent folder is valid
+            new_folder.parent_id = parsed_parent_id
         db.session.add(new_folder)
         db.session.commit()
         
@@ -506,7 +579,7 @@ def create_folder_json():
         
         # Log success
         logger.info("User %s created folder '%s' with parent_id %s", 
-                  current_user.id, folder_name, parent_id if parent_id and parent_id.strip() else "None")
+                  current_user.id, folder_name, stripped_parent_id if stripped_parent_id else "None")
         
         response['success'] = True
         response['message'] = f'Folder "{folder_name}" created successfully'
@@ -674,13 +747,34 @@ def preview_document(document_id):
             # Calculate the length of the content
             content_length = end_byte - start_byte + 1
             
-            # Read the requested range from the file
-            with open(file_path, 'rb') as f:
-                f.seek(start_byte)
-                data = f.read(content_length)
+            # Define a threshold for when to use chunked reading (1MB)
+            CHUNKED_THRESHOLD = 1024 * 1024
             
-            # Create the response with the appropriate headers
-            response = make_response(data)
+            if content_length > CHUNKED_THRESHOLD:
+                # Use chunked reading for large files
+                chunk_size = 8192  # 8KB chunks to reduce memory usage
+                
+                def generate_chunks():
+                    with open(file_path, 'rb') as f:
+                        f.seek(start_byte)
+                        bytes_remaining = content_length
+                        while bytes_remaining > 0:
+                            chunk = f.read(min(chunk_size, bytes_remaining))
+                            if not chunk:
+                                break
+                            bytes_remaining -= len(chunk)
+                            yield chunk
+                
+                # Create the response with chunked generation
+                response = make_response(generate_chunks())
+            else:
+                # For smaller files, read the whole range at once for better performance
+                with open(file_path, 'rb') as f:
+                    f.seek(start_byte)
+                    data = f.read(content_length)
+                
+                # Create the response directly with the data
+                response = make_response(data)
             response.headers.add('Content-Type', content_type)
             response.headers.add('Accept-Ranges', 'bytes')
             response.headers.add('Content-Range', f'bytes {start_byte}-{end_byte}/{file_size}')
@@ -735,44 +829,172 @@ def after_request(response):
         logger.debug("Template rendered with status: %s", response.status)
     return response
 
-@dashboard.route('/create_folder', methods=['POST'])
-def create_folder():
-    """Create a new folder in the records system"""
-    try:
-        folder_name = request.form.get('folder_name')
-        parent_id = request.form.get('parent_id')
-        
-        if not folder_name:
-            flash('Folder name is required', 'error')
-            return redirect(url_for('dashboard.records'))
-            
-        # Create new folder
-        new_folder = Folder(
-            name=folder_name,
-            user_id=current_user.id
-        )
-        
-        # If parent_id is provided, set the parent folder
-        if parent_id:
-            try:
-                parent_id = int(parent_id)
-                parent_folder = Folder.query.get(parent_id)
-                if parent_folder and parent_folder.user_id == current_user.id:
-                    new_folder.parent_id = parent_id
-                else:
-                    flash('Invalid parent folder', 'error')
-                    return redirect(url_for('dashboard.records'))
-            except ValueError:
-                flash('Invalid parent folder ID', 'error')
-                return redirect(url_for('dashboard.records'))
-        
-        # Save to database
-        db.session.add(new_folder)
-        db.session.commit()
-        
-        flash(f'Folder "{folder_name}" created successfully', 'success')
-    except Exception as e:
-        db.session.rollback()
-        flash(f'Error creating folder: {str(e)}', 'error')
+
+@dashboard.route('/api/process-pdf-images/<int:document_id>', methods=['GET'])
+@login_required
+def process_pdf_images_api(document_id):
+    """
+    API endpoint to process PDF content (text and images) using Gemini 2.0 Flash model.
     
-    return redirect(url_for('dashboard.records'))
+    Args:
+        document_id: ID of the PDF document to process
+        
+    Query Parameters:
+        extract_text: Whether to extract and analyze text content (default: true)
+        
+    Returns:
+        JSON response containing processing results including:
+        - Text and image analysis results organized by page
+        - Processing status and metadata
+    """
+    try:
+        start_time = datetime.utcnow()
+        
+        # Get the document and verify ownership
+        document = Document.query.get_or_404(document_id)
+        if document.user_id != current_user.id:
+            return jsonify({
+                'success': False,
+                'message': 'Access denied: You do not have permission to process this document'
+            }), 403
+        
+        # Verify document is a PDF
+        if document.file_type.lower() != 'pdf':
+            return jsonify({
+                'success': False,
+                'message': 'Invalid file type: Document must be a PDF'
+            }), 400
+        
+        # Get extract_text parameter (default to True)
+        extract_text = request.args.get('extract_text', 'true').lower() != 'false'
+        
+        # Process PDF content using the Document model method
+        logger.info(f"Processing PDF content for document {document_id} (extract_text={extract_text})")
+        result = document.process_pdf_images(extract_text=extract_text)
+        
+        # Calculate processing time
+        processing_time = (datetime.utcnow() - start_time).total_seconds()
+        
+        # Add processing metadata if successful
+        if result['success']:
+            total_items = len(result['results'])
+            image_count = sum(1 for item in result.get('results', []) if item.get('content_type') == 'image')
+            text_count = sum(1 for item in result.get('results', []) if item.get('content_type') == 'text')
+            error_count = sum(1 for item in result.get('results', []) if item.get('error', False))
+            
+            logger.info(
+                f"Successfully processed document {document_id} in {processing_time:.2f}s: "
+                f"{total_items} total items ({image_count} images, {text_count} text sections, {error_count} errors)"
+            )
+            
+            # Add processing metadata to the result
+            result['processing_time'] = f"{processing_time:.2f}s"
+            result['image_count'] = image_count
+            result['text_count'] = text_count
+            result['error_count'] = error_count
+            result['processed_at'] = datetime.utcnow().isoformat()
+        else:
+            logger.error(f"Failed to process document {document_id}: {result['message']}")
+        
+        # Return the processing result
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error processing PDF content for document {document_id}: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'Error processing PDF content: {str(e)}'
+        }), 500
+
+
+@dashboard.route('/records/document/<int:document_id>', methods=['GET'])
+@login_required
+def get_document_info(document_id):
+    """
+    Get basic information about a document for the frontend
+    """
+    try:
+        # Get the document and verify ownership
+        document = Document.query.get_or_404(document_id)
+        if document.user_id != current_user.id:
+            return jsonify({
+                'success': False,
+                'message': 'Access denied: You do not have permission to view this document'
+            }), 403
+        
+        # Return basic document info
+        return jsonify({
+            'success': True,
+            'id': document.id,
+            'filename': document.original_filename,
+            'file_type': document.file_type,
+            'file_size': document.file_size,
+            'upload_date': document.upload_date.isoformat(),
+            'url_path': document.get_url_path()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error retrieving document info for document {document_id}: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'Error retrieving document info: {str(e)}'
+        }), 500
+
+
+@dashboard.route('/regenerate_summary/<int:folder_id>', methods=['POST'])
+@login_required
+def regenerate_summary(folder_id):
+    """
+    Force regeneration of AI-generated summary for a folder.
+    
+    Args:
+        folder_id: ID of the folder to regenerate summary for
+        
+    Returns:
+        JSON response containing:
+        - success: Boolean indicating if the operation was successful
+        - summary: The newly generated summary text
+        - last_updated: Timestamp when the summary was generated
+        - message: Success or error message
+    """
+    try:
+        # Get the folder and verify ownership
+        folder = Folder.query.get_or_404(folder_id)
+        if folder.user_id != current_user.id:
+            logger.warning(f"User {current_user.id} attempted to regenerate summary for unauthorized folder {folder_id}")
+            return jsonify({
+                'success': False,
+                'message': 'Access denied: You do not have permission to access this folder'
+            }), 403
+        
+        # Check if folder has documents
+        documents_count = Document.query.filter_by(folder_id=folder_id).count()
+        if documents_count == 0:
+            return jsonify({
+                'success': True,
+                'summary': "This folder is empty.",
+                'last_updated': datetime.utcnow().isoformat(),
+                'message': 'Folder is empty'
+            })
+        
+        # Force regeneration of the summary
+        logger.info(f"Regenerating summary for folder {folder_id} (User: {current_user.id})")
+        new_summary = FolderSummary.generate_summary(folder_id)
+        
+        # Get the updated summary record for the timestamp
+        summary_record = FolderSummary.query.filter_by(folder_id=folder_id).first()
+        last_updated = summary_record.last_updated if summary_record else datetime.utcnow()
+        
+        return jsonify({
+            'success': True,
+            'summary': new_summary,
+            'last_updated': last_updated.isoformat(),
+            'message': 'Summary regenerated successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error regenerating summary for folder {folder_id}: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'Error regenerating summary: {str(e)}'
+        }), 500

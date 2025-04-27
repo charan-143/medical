@@ -4,11 +4,13 @@ import shutil
 import uuid
 import hashlib
 import bcrypt
+import json
 from pathlib import Path
 from flask import current_app
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+import google.generativeai as genai
 
 # Import db from extensions to avoid circular imports
 from extensions import db
@@ -97,9 +99,401 @@ class Folder(db.Model):
     # Relationships
     documents = db.relationship('Document', backref='folder', lazy='dynamic', cascade='all, delete-orphan')
     children = db.relationship('Folder', backref=db.backref('parent', remote_side=[id]), lazy='dynamic')
+    # Note: FolderSummary relationship is defined in the FolderSummary model
     
     def __repr__(self):
         return f'<Folder {self.name}>'
+
+
+
+class FolderSummary(db.Model):
+    """Model for storing AI-generated summaries of folder contents using Gemini 2.0"""
+    __tablename__ = 'folder_summaries'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    folder_id = db.Column(db.Integer, db.ForeignKey('folders.id'), nullable=False, unique=True)
+    summary_text = db.Column(db.Text, nullable=True)
+    last_updated = db.Column(db.DateTime, default=datetime.utcnow)
+    file_hash = db.Column(db.String(128), nullable=True)
+    
+    # Add minimum time between regenerations (30 minutes)
+    REGENERATION_COOLDOWN = 1800  # seconds
+    
+    # Relationship
+    folder = db.relationship('Folder', backref=db.backref('summary', uselist=False, cascade='all, delete-orphan'))
+    
+    def __repr__(self):
+        return f'<FolderSummary for folder_id {self.folder_id}>'
+    
+    @staticmethod
+    def calculate_folder_hash(folder_id):
+        """
+        Calculate a hash representing the state of all files in a folder.
+        This hash changes when files are added, removed, or modified.
+        """
+        try:
+            # Get all documents in the folder
+            documents = Document.query.filter_by(folder_id=folder_id).all()
+            
+            # Sort by filename to ensure consistent order
+            documents.sort(key=lambda x: x.filename)
+            
+            # Create a list of (filename, file_hash, file_size) tuples
+            file_data = [(doc.filename, doc.content_hash, doc.file_size) for doc in documents]
+            
+            # Convert to string and hash
+            file_data_str = json.dumps(file_data)
+            folder_hash = hashlib.sha256(file_data_str.encode()).hexdigest()
+            
+            return folder_hash
+        except Exception as e:
+            current_app.logger.error(f"Error calculating folder hash: {str(e)}")
+            return None
+    
+    @staticmethod
+    def needs_update(folder_id, current_hash=None, force_refresh=False):
+        """
+        Check if the summary needs to be updated based on hash changes and cooldown period.
+        
+        Args:
+            folder_id: The ID of the folder to check
+            current_hash: Optional pre-calculated hash
+            force_refresh: If True, ignore cooldown period
+            
+        Returns:
+            bool: True if summary needs updating, False otherwise
+        """
+        try:
+            if current_hash is None:
+                current_hash = FolderSummary.calculate_folder_hash(folder_id)
+                
+            if current_hash is None:
+                current_app.logger.warning(f"Could not calculate hash for folder {folder_id}")
+                return True
+                
+            summary = FolderSummary.query.filter_by(folder_id=folder_id).first()
+            
+            # If no summary exists, definitely need update
+            if not summary:
+                current_app.logger.info(f"No existing summary found for folder {folder_id}")
+                return True
+                
+            # Check if hash has changed
+            hash_changed = not summary.file_hash or summary.file_hash.lower() != current_hash.lower()
+            
+            # If hash unchanged and not forcing refresh, check cooldown period
+            if not hash_changed and not force_refresh:
+                # Check if enough time has passed since last update
+                if summary.last_updated:
+                    elapsed = (datetime.utcnow() - summary.last_updated).total_seconds()
+                    if elapsed < FolderSummary.REGENERATION_COOLDOWN:
+                        current_app.logger.debug(
+                            f"Skipping regeneration for folder {folder_id}, "
+                            f"last updated {elapsed:.0f} seconds ago"
+                        )
+                        return False
+                        
+            if hash_changed:
+                current_app.logger.info(
+                    f"Hash changed for folder {folder_id}\n"
+                    f"Stored hash: {summary.file_hash}\n"
+                    f"Current hash: {current_hash}"
+                )
+            
+            return True
+            
+        except Exception as e:
+            current_app.logger.error(f"Error checking if summary needs update: {str(e)}")
+            return True
+            
+    @staticmethod
+    def hash_changed(folder_id, current_hash=None):
+        """
+        Check if the folder hash has changed from the stored hash.
+        Returns True if hash has changed or if no summary exists yet.
+        
+        Deprecated: Use needs_update() instead.
+        """
+        # Calculate current hash if not provided
+        if current_hash is None:
+            current_hash = FolderSummary.calculate_folder_hash(folder_id)
+            
+        # Get existing summary
+        summary = FolderSummary.query.filter_by(folder_id=folder_id).first()
+        
+        # If no summary or hash has changed, return True
+        if not summary or summary.file_hash != current_hash:
+            return True
+            
+        return False
+    
+    @staticmethod
+    def generate_summary(folder_id):
+        """
+        Generate a summary of the folder contents using Gemini 2.0 Flash.
+        Uploads all files in the folder directly to the Gemini API as context.
+        """
+        try:
+            # Calculate current folder hash
+            current_hash = FolderSummary.calculate_folder_hash(folder_id)
+            
+            # Check if folder has files
+            documents = Document.query.filter_by(folder_id=folder_id).all()
+            if not documents:
+                return "This folder is empty."
+            
+            # Get existing summary
+            summary = FolderSummary.query.filter_by(folder_id=folder_id).first()
+            
+            # If hash hasn't changed and we have a summary, return existing summary
+            if summary and summary.file_hash == current_hash and summary.summary_text:
+                current_app.logger.debug(f"Using cached summary for folder {folder_id}")
+                return summary.summary_text
+            
+            # Initialize Gemini
+            api_key = current_app.config.get('GEMINI_API_KEY')
+            if not api_key:
+                current_app.logger.error("GEMINI_API_KEY not found in configuration")
+                return "Unable to generate summary: API key not configured."
+            
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # Get folder name for context
+            folder_obj = Folder.query.get(folder_id)
+            folder_name = folder_obj.name if folder_obj else f"Folder #{folder_id}"
+            
+            # Create initial text prompt
+            text_prompt = f"""
+            Generate a comprehensive medical analysis of the contents in folder "{folder_name}". I'll provide all medical documents and images as context.
+            
+            Please analyze all content and structure your response as follows (within 200-300 words):
+            
+            1. MEDICAL SUMMARY
+               - List key medical conditions, diagnoses, and ongoing treatments
+               - Highlight any critical or abnormal values from lab reports
+               - Note significant findings from imaging studies
+               - Identify any urgent medical concerns or red flags
+            
+            2. CHRONOLOGICAL TIMELINE
+               - Document progression of medical events
+               - Track changes in vital signs or test results over time
+               - Note significant treatment changes or interventions
+            
+            3. CROSS-DOCUMENT ANALYSIS
+               - Correlate findings between different medical reports
+               - Compare current results with previous baselines
+               - Identify trends or patterns across documents
+               - Link related findings from different specialists/visits
+            
+            4. IMAGE ANALYSIS
+               For medical imaging (X-rays, MRI, CT scans, etc.):
+               - Describe key anatomical findings
+               - Note any abnormalities or significant changes
+               - Compare with previous imaging if available
+               - Highlight areas requiring follow-up
+            
+            5. RECOMMENDATIONS & FOLLOW-UP
+               - List pending tests or scheduled procedures
+               - Document recommended follow-up appointments
+               - Note any specific monitoring requirements
+               - Highlight preventive care measures
+            
+            6. TECHNICAL TERMS
+               - Define any complex medical terminology used
+               - Explain abbreviations and technical measurements
+               - Clarify medical jargon in plain language
+            
+            IMPORTANT: Prioritize clinically significant findings and abnormal results. If critical values or urgent findings are present, highlight these at the beginning of the summary.
+            """
+            
+            # Prepare content parts for the API call - starting with the text prompt
+            parts = [text_prompt]
+            file_info = []
+            
+            # Process each document to add as context
+            for doc in documents:
+                file_path = doc.get_file_path()
+                if not file_path or not file_path.exists():
+                    current_app.logger.warning(f"File not found: {doc.original_filename}")
+                    file_info.append(f"File: {doc.original_filename} (File not found)")
+                    continue
+                
+                file_type = doc.file_type.lower()
+                
+                try:
+                    # For text-based files, read content and add as text
+                    if file_type in ['txt', 'md', 'csv', 'json', 'xml', 'html']:
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                            # Include file content as text
+                            parts.append(f"File: {doc.original_filename}\n\n{content}")
+                            file_info.append(f"Text file: {doc.original_filename}")
+                    
+                    # For PDFs, extract both text and images using pdf_reader.py
+                    elif file_type == 'pdf':
+                        current_app.logger.info(f"Processing PDF: {doc.original_filename}")
+                        
+                        # Import PDF utilities
+                        from pdf_reader import extract_pdf_content
+                        
+                        # Extract both text and images
+                        pdf_content_result = extract_pdf_content(str(file_path), extract_images=True)
+                        
+                        if not pdf_content_result['success']:
+                            current_app.logger.error(f"Failed to extract PDF content: {pdf_content_result['text_status']}")
+                            file_info.append(f"File: {doc.original_filename} (Could not extract PDF content)")
+                            continue
+                        
+                        # Get text content and add it
+                        text_content = pdf_content_result['text']
+                        if text_content and not text_content.startswith("Error:"):
+                            parts.append(f"PDF Text from {doc.original_filename}:\n\n{text_content}")
+                            file_info.append(f"PDF text from: {doc.original_filename}")
+                        
+                        # Get images and add them (up to 15 per file to avoid context limits)
+                        images = pdf_content_result['images']
+                        if images:
+                            current_app.logger.info(f"Found {len(images)} images in PDF: {doc.original_filename}")
+                            
+                            # Limit to 15 images per file to avoid context limits
+                            image_count = min(len(images), 15)
+                            for i in range(image_count):
+                                img = images[i]
+                                if 'data' in img and img['data']:
+                                    # Add image as context with page information
+                                    image_part = {
+                                        'mime_type': f'image/{img["format"]}',
+                                        'data': img['data']
+                                    }
+                                    parts.append(image_part)
+                                    file_info.append(f"Image {i+1} from page {img['page_num']} of {doc.original_filename}")
+                    
+                    # For images, add them directly
+                    elif file_type in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
+                        with open(file_path, 'rb') as img_file:
+                            import base64
+                            # Read and encode the image data
+                            image_data = base64.b64encode(img_file.read()).decode('utf-8')
+                            
+                            # Add image as context
+                            image_part = {
+                                'mime_type': f'image/{file_type}',
+                                'data': image_data
+                            }
+                            parts.append(image_part)
+                            file_info.append(f"Image file: {doc.original_filename}")
+                    
+                    # For other files, just include metadata
+                    else:
+                        file_info.append(f"File: {doc.original_filename} (Type: {doc.file_type}, Size: {doc.file_size} bytes)")
+                
+                except Exception as e:
+                    current_app.logger.error(f"Error processing file {doc.filename}: {str(e)}")
+                    file_info.append(f"File: {doc.original_filename} (Error: {str(e)})")
+            
+            # Add file info summary to the prompt
+            file_info_text = "Files included in this analysis:\n" + "\n".join([f"- {info}" for info in file_info])
+            parts.insert(1, file_info_text)  # Insert after the main prompt but before the file contents
+            
+            current_app.logger.info(f"Sending {len(parts)} content parts to Gemini API for folder {folder_id}")
+            
+            # Generate summary with all content parts
+            try:
+                response = model.generate_content(parts)
+                summary_text = response.text
+                
+                # Begin a new transaction (ensure any previous transaction is rolled back)
+                db.session.rollback()
+                
+                try:
+                    # First, get the document's content_hash directly for single-document folders
+                    document = Document.query.filter_by(folder_id=folder_id).first()
+                    if document:
+                        current_hash = document.content_hash
+                        current_app.logger.info(f"Using document content_hash for folder {folder_id}: {current_hash}")
+                    else:
+                        current_app.logger.warning(f"No document found for folder {folder_id}, using calculated hash")
+                        # Fall back to calculated hash if no document is found
+                        current_hash = FolderSummary.calculate_folder_hash(folder_id)
+                    
+                    # Use SQLAlchemy's merge operation for proper upsert behavior
+                    existing_summary = FolderSummary.query.filter_by(folder_id=folder_id).first()
+                    
+                    if existing_summary:
+                        # Update existing record
+                        existing_summary.summary_text = summary_text
+                        existing_summary.file_hash = current_hash
+                        existing_summary.last_updated = datetime.utcnow()
+                        current_app.logger.info(f"Updated summary for folder {folder_id} with hash {current_hash}")
+                    else:
+                        # Create new record
+                        new_summary = FolderSummary(
+                            folder_id=folder_id,
+                            summary_text=summary_text,
+                            file_hash=current_hash,
+                            last_updated=datetime.utcnow()
+                        )
+                        db.session.add(new_summary)
+                        current_app.logger.info(f"Created new summary for folder {folder_id} with hash {current_hash}")
+                    
+                    # Commit the changes
+                    db.session.commit()
+                    return summary_text
+                    
+                except Exception as db_error:
+                    # Rollback on any database error
+                    db.session.rollback()
+                    current_app.logger.error(f"Database error saving summary: {str(db_error)}")
+                    return f"Error saving summary: {str(db_error)}"
+                
+            except Exception as e:
+                # Rollback any pending transaction
+                db.session.rollback()
+                current_app.logger.error(f"Error generating summary with Gemini: {str(e)}")
+                return f"Error generating summary: {str(e)}"
+                
+        except Exception as e:
+            current_app.logger.error(f"Error in generate_summary: {str(e)}")
+            return "An error occurred while generating the folder summary."
+    
+    @staticmethod
+    def get_or_generate_summary(folder_id, force_refresh=False):
+        """
+        Get the existing summary or generate a new one if needed.
+        
+        Args:
+            folder_id: The ID of the folder to summarize
+            force_refresh: If True, force regeneration of summary
+            
+        Returns:
+            str: The summary text
+        """
+        try:
+            # Check if folder exists
+            folder = Folder.query.get(folder_id)
+            if not folder:
+                return "Folder not found."
+            
+            # Calculate current hash
+            current_hash = FolderSummary.calculate_folder_hash(folder_id)
+            
+            # Check if we need to update the summary
+            if FolderSummary.needs_update(folder_id, current_hash, force_refresh):
+                return FolderSummary.generate_summary(folder_id)
+            
+            # Get existing summary
+            summary = FolderSummary.query.filter_by(folder_id=folder_id).first()
+            if summary and summary.summary_text:
+                current_app.logger.debug(f"Using cached summary for folder {folder_id}")
+                return summary.summary_text
+            
+            # If we get here, generate a new summary
+            return FolderSummary.generate_summary(folder_id)
+        
+        except Exception as e:
+            current_app.logger.error(f"Error in get_or_generate_summary: {str(e)}")
+            return "An error occurred while retrieving the folder summary."
 
 
 class Document(db.Model):
@@ -513,7 +907,323 @@ class Document(db.Model):
             self.folder_id = old_folder_id
             current_app.logger.error(f"Error moving file {self.filename}: {str(e)}")
             raise Exception(f"Error moving file: {str(e)}")
-
+    
+    def process_pdf_images(self, from_flask_login=True, extract_text=True):
+        """
+        Process PDF content (text and images) using Gemini 2.0 Flash model.
+        
+        Args:
+            from_flask_login (bool): Whether this method is being called from a Flask route with
+                                     flask_login's current_user available
+            extract_text (bool): Whether to extract and process text along with images
+        
+        Returns:
+            dict: Dictionary containing:
+                - 'success' (bool): Whether the processing was successful
+                - 'results' (list): List of dictionaries with processed PDF content results by page
+                - 'message' (str): Success or error message
+        """
+        try:
+            # Verify user has access to this document if called from Flask route
+            if from_flask_login:
+                from flask_login import current_user
+                if not current_user or not current_user.is_authenticated or self.user_id != current_user.id:
+                    return {
+                        'success': False,
+                        'results': [],
+                        'message': 'Access denied: You do not have permission to process this document'
+                    }
+            
+            # Get file path and verify it exists
+            file_path = self.get_file_path()
+            if not file_path or not file_path.exists():
+                current_app.logger.error(f"File not found or inaccessible: {file_path}")
+                return {
+                    'success': False,
+                    'results': [],
+                    'message': 'File not found or inaccessible'
+                }
+            
+            # Check if file is PDF
+            if self.file_type.lower() != 'pdf':
+                return {
+                    'success': False,
+                    'results': [],
+                    'message': 'File is not a PDF'
+                }
+            
+            # Extract both text and images from PDF
+            from pdf_reader import extract_pdf_content, extract_pdf_images, extract_pdf_text
+            
+            # Determine what to extract based on the extract_text parameter
+            if extract_text:
+                current_app.logger.info(f"Extracting both text and images from PDF: {self.original_filename}")
+                pdf_content_result = extract_pdf_content(str(file_path), extract_images=True)
+                
+                if not pdf_content_result['success']:
+                    current_app.logger.error(f"Failed to extract PDF content: {pdf_content_result['text_status']}")
+                    return {
+                        'success': False,
+                        'results': [],
+                        'message': f'Failed to extract PDF content: {pdf_content_result["text_status"]}'
+                    }
+                
+                # Extract text and images from the result
+                text_content = pdf_content_result['text']
+                images = pdf_content_result['images']
+                page_count = pdf_content_result['page_count']
+                
+                # Log extraction results
+                current_app.logger.info(f"Extracted {len(images)} images and {page_count} pages of text from PDF")
+                
+                # Check if no images were found but text exists
+                if not images and not text_content.strip():
+                    return {
+                        'success': True,
+                        'results': [],
+                        'message': 'No content found in PDF document'
+                    }
+            else:
+                # Extract only images (original behavior)
+                current_app.logger.info(f"Extracting only images from PDF: {self.original_filename}")
+                extraction_result = extract_pdf_images(str(file_path))
+                
+                if not extraction_result['success']:
+                    return {
+                        'success': False,
+                        'results': [],
+                        'message': f'Failed to extract images: {extraction_result["message"]}'
+                    }
+                
+                images = extraction_result['images']
+                text_content = None
+                
+                # Get page count for reference
+                try:
+                    with open(str(file_path), 'rb') as file:
+                        pdf_reader = PyPDF2.PdfReader(file)
+                        page_count = len(pdf_reader.pages)
+                except Exception as e:
+                    current_app.logger.error(f"Error getting page count: {str(e)}")
+                    page_count = 0
+                
+                if not images:
+                    return {
+                        'success': True,
+                        'results': [],
+                        'message': 'No images found in PDF'
+                    }
+            
+            # Initialize Gemini (using same configuration as FolderSummary)
+            api_key = current_app.config.get('GEMINI_API_KEY')
+            if not api_key:
+                current_app.logger.error("GEMINI_API_KEY not found in configuration")
+                return {
+                    'success': False,
+                    'results': [],
+                    'message': 'Gemini API key not configured'
+                }
+            
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # Organize content by page for processing
+            page_content = {}
+            
+            # First, organize images by page
+            for img in images:
+                page_num = img['page_num']
+                if page_num not in page_content:
+                    page_content[page_num] = {'images': [], 'text': None}
+                page_content[page_num]['images'].append(img)
+            
+            # If text extraction was enabled, split text by page and add to page_content
+            if extract_text and text_content and not text_content.startswith("Error:"):
+                # Split the text content by page if possible
+                # This is a simplified approach; in reality, you might need a more sophisticated
+                # method to accurately split PDF text by page
+                try:
+                    with open(str(file_path), 'rb') as file:
+                        pdf_reader = PyPDF2.PdfReader(file)
+                        for page_num in range(len(pdf_reader.pages)):
+                            page = pdf_reader.pages[page_num]
+                            page_text = page.extract_text()
+                            
+                            if page_num + 1 not in page_content:
+                                page_content[page_num + 1] = {'images': [], 'text': None}
+                            
+                            page_content[page_num + 1]['text'] = page_text
+                except Exception as e:
+                    current_app.logger.error(f"Error splitting text by page: {str(e)}")
+                    # If splitting fails, use the whole text for all pages with images
+                    for page_num in page_content.keys():
+                        page_content[page_num]['text'] = text_content
+            
+            # Process content page by page with Gemini
+            results = []
+            
+            for page_num, content in sorted(page_content.items()):
+                try:
+                    page_images = content['images']
+                    page_text = content['text']
+                    
+                    # If this page has images
+                    if page_images:
+                        for img_idx, img_data in enumerate(page_images):
+                            try:
+                                # Create a context-aware prompt that includes text if available
+                                if page_text and page_text.strip():
+                                    text_preview = page_text[:1000] + "..." if len(page_text) > 1000 else page_text
+                                    prompt = f"""
+                                    Analyze this medical image from page {page_num} of the PDF document along with the text from the same page. 
+                                    
+                                    Text content from page {page_num}:
+                                    {text_preview}
+                                    
+                                    Please provide:
+                                    1. Description of what the image shows
+                                    2. Any notable findings or abnormalities visible in the image
+                                    3. Potential medical significance if applicable
+                                    4. How the image relates to the text content on the same page (if relevant)
+                                    
+                                    Be clear and professional in your analysis, and indicate if the image quality 
+                                    is too poor to make conclusive observations.
+                                    """
+                                else:
+                                    # Create prompt for just the image if no text is available
+                                    prompt = f"""
+                                    Analyze this medical image from page {page_num} of the PDF document. Please provide:
+                                    1. Description of what the image shows
+                                    2. Any notable findings or abnormalities visible in the image
+                                    3. Potential medical significance if applicable
+                                    
+                                    Be clear and professional in your analysis, and indicate if the image quality 
+                                    is too poor to make conclusive observations.
+                                    """
+                                
+                                # Create a multipart message with the prompt and image
+                                parts = [prompt]
+                                
+                                # Create a base64 image part for Gemini
+                                image_part = {
+                                    'mime_type': f'image/{img_data["format"]}',
+                                    'data': img_data['data']
+                                }
+                                parts.append(image_part)
+                                
+                                # Process image with Gemini
+                                response = model.generate_content(parts)
+                                
+                                # Add processed result
+                                result_item = {
+                                    'page_num': page_num,
+                                    'image_idx': img_idx,
+                                    'image_data': img_data['data'],  # base64 encoded image
+                                    'analysis': response.text,
+                                    'format': img_data['format'],
+                                    'content_type': 'image',
+                                    'has_text_context': bool(page_text and page_text.strip())
+                                }
+                                
+                                results.append(result_item)
+                                current_app.logger.info(f"Successfully processed image {img_idx+1} from page {page_num}")
+                                
+                            except Exception as img_err:
+                                current_app.logger.error(f"Error processing image {img_idx+1} from page {page_num}: {str(img_err)}")
+                                results.append({
+                                    'page_num': page_num,
+                                    'image_idx': img_idx,
+                                    'image_data': img_data['data'],
+                                    'analysis': f"Error processing image: {str(img_err)}",
+                                    'format': img_data['format'],
+                                    'content_type': 'image',
+                                    'error': True
+                                })
+                    
+                    # If this page has text but no images, or if there are images but we want to process text separately
+                    elif page_text and page_text.strip() and extract_text:
+                        try:
+                            # Create prompt for text-only analysis
+                            text_preview = page_text[:3000] + "..." if len(page_text) > 3000 else page_text
+                            prompt = f"""
+                            Analyze this medical text from page {page_num} of the PDF document. Please provide:
+                            1. Summary of the key information presented
+                            2. Any medical findings, diagnoses, or treatments mentioned
+                            3. Important medical terminology explained in simple terms
+                            
+                            Text content from page {page_num}:
+                            {text_preview}
+                            
+                            Be clear and professional in your analysis.
+                            """
+                            
+                            # Process text with Gemini
+                            response = model.generate_content(prompt)
+                            
+                            # Add processed result
+                            results.append({
+                                'page_num': page_num,
+                                'text_preview': text_preview[:100] + "..." if len(text_preview) > 100 else text_preview,
+                                'analysis': response.text,
+                                'content_type': 'text'
+                            })
+                            
+                            current_app.logger.info(f"Successfully processed text from page {page_num}")
+                            
+                        except Exception as text_err:
+                            current_app.logger.error(f"Error processing text from page {page_num}: {str(text_err)}")
+                            results.append({
+                                'page_num': page_num,
+                                'text_preview': page_text[:100] + "..." if len(page_text) > 100 else page_text,
+                                'analysis': f"Error processing text: {str(text_err)}",
+                                'content_type': 'text',
+                                'error': True
+                            })
+                
+                except Exception as page_err:
+                    current_app.logger.error(f"Error processing page {page_num}: {str(page_err)}")
+                    results.append({
+                        'page_num': page_num,
+                        'analysis': f"Error processing page: {str(page_err)}",
+                        'content_type': 'error',
+                        'error': True
+                    })
+            
+            # Sort results by page number for consistency
+            results.sort(key=lambda x: (x['page_num'], x.get('image_idx', 0)))
+            
+            # Count successful and failed items
+            error_count = sum(1 for item in results if item.get('error', False))
+            success_count = len(results) - error_count
+            
+            # Create appropriate message based on results
+            if not results:
+                message = "No content was processed from the PDF document."
+            elif error_count == 0:
+                message = f"Successfully processed all {len(results)} items from the PDF document."
+            elif success_count == 0:
+                message = f"Failed to process any content from the PDF document."
+            else:
+                message = f"Processed {success_count} items successfully with {error_count} errors."
+                
+            current_app.logger.info(f"PDF processing complete: {message}")
+            
+            return {
+                'success': True,
+                'results': results,
+                'message': message,
+                'document_name': self.original_filename,
+                'page_count': page_count
+            }
+            
+        except Exception as e:
+            current_app.logger.error(f"Error in process_pdf_images: {str(e)}", exc_info=True)
+            return {
+                'success': False,
+                'results': [],
+                'message': f'Error processing PDF content: {str(e)}'
+            }
 
 class VitalMeasurement(db.Model):
     """Model for storing vital sign measurements"""

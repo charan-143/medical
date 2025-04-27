@@ -21,6 +21,10 @@ def register_cli_commands(app):
         from migrations.add_content_hash import register_migration_command
         register_migration_command(app)
 
+        # Register folder_summaries commands
+        from migrations.add_folder_summary import register_migration_command as register_folder_summary_command
+        register_folder_summary_command(app)
+
         # Register migrate-uploads command
         from migrations.migrate_uploads import migrate_uploads
         
@@ -35,6 +39,7 @@ def register_cli_commands(app):
                 print("File migration completed. Check the application logs for details.")
                 
         logger.debug("Successfully registered migrate-uploads command")
+        logger.debug("Successfully registered folder_summaries commands")
     except Exception as e:
         logger.error(f"Failed to register migrate-uploads command: {str(e)}")
 
@@ -43,6 +48,12 @@ def create_app(config_name=None):
         config_name = os.environ.get('FLASK_CONFIG', 'default')
     
     app = Flask(__name__)
+    
+    @app.template_filter('nl2br')
+    def nl2br_filter(text):
+        if not text:
+            return ""
+        return text.replace('\n', '<br>')
     
     # First load the config to get any base settings
     app.config.from_object(config[config_name])
@@ -129,6 +140,7 @@ def create_app(config_name=None):
     csrf.exempt('dashboard.upload_json')
     csrf.exempt('dashboard.create_folder_json')
     csrf.exempt('dashboard.get_folder_name_json')
+    csrf.exempt('dashboard.regenerate_summary')
     
     @app.after_request
     def add_csrf_header(response):

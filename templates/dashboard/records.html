@@ -38,6 +38,120 @@ endblock %} {% block styles %} {{ super() }}
 	.ai-content .text-section {
 		margin-bottom: 1.5rem;
 	}
+
+	/* Markdown content styling */
+	.markdown-content {
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+		line-height: 1.6;
+		color: #212529;
+	}
+
+	.markdown-content h1, 
+	.markdown-content h2, 
+	.markdown-content h3, 
+	.markdown-content h4, 
+	.markdown-content h5, 
+	.markdown-content h6 {
+		margin-top: 1.5rem;
+		margin-bottom: 1rem;
+		font-weight: 600;
+		line-height: 1.25;
+		color: #2d3748;
+	}
+
+	.markdown-content h1 { font-size: 2rem; }
+	.markdown-content h2 { font-size: 1.5rem; }
+	.markdown-content h3 { font-size: 1.25rem; }
+	.markdown-content h4 { font-size: 1.1rem; }
+	.markdown-content h5 { font-size: 1rem; }
+	.markdown-content h6 { font-size: 0.875rem; }
+
+	.markdown-content p {
+		margin-bottom: 1rem;
+	}
+
+	.markdown-content ul,
+	.markdown-content ol {
+		margin-bottom: 1rem;
+		padding-left: 2rem;
+	}
+
+	.markdown-content li {
+		margin-bottom: 0.5rem;
+	}
+
+	.markdown-content code {
+		padding: 0.2em 0.4em;
+		background-color: #f3f4f6;
+		border-radius: 0.25rem;
+		font-family: SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 0.875em;
+	}
+
+	.markdown-content pre {
+		padding: 1rem;
+		background-color: #f3f4f6;
+		border-radius: 0.5rem;
+		overflow-x: auto;
+		margin-bottom: 1rem;
+	}
+
+	.markdown-content pre code {
+		padding: 0;
+		background-color: transparent;
+	}
+
+	.markdown-content blockquote {
+		padding: 0.5rem 1rem;
+		margin-bottom: 1rem;
+		border-left: 4px solid #4361ee;
+		background-color: #e9ecef;
+		color: #495057;
+	}
+
+	.markdown-content table {
+		width: 100%;
+		margin-bottom: 1rem;
+		border-collapse: collapse;
+	}
+
+	.markdown-content th,
+	.markdown-content td {
+		padding: 0.75rem;
+		border: 1px solid #dee2e6;
+	}
+
+	.markdown-content th {
+		background-color: #f8f9fa;
+		font-weight: 600;
+	}
+
+	.markdown-content a {
+		color: #4361ee;
+		text-decoration: none;
+	}
+
+	.markdown-content a:hover {
+		text-decoration: underline;
+	}
+
+	.markdown-content hr {
+		margin: 2rem 0;
+		border: 0;
+		border-top: 1px solid #dee2e6;
+	}
+
+	/* Error message styling with markdown */
+	#summaryError .alert {
+		margin-bottom: 0;
+	}
+
+	#errorMessage.markdown-content h2 {
+		color: #dc3545;
+		margin-top: 0;
+		font-size: 1.25rem;
+	}
+
 	/* Grid layout for files and folders */
 	.folder-container {
 		display: grid;
@@ -472,24 +586,44 @@ endblock %} {% block styles %} {{ super() }}
 						<!-- AI Generated Text tab -->
 						<div class="tab-pane fade" id="ai-text-tab-pane" role="tabpanel" aria-labelledby="ai-text-tab" tabindex="0">
 							<div class="ai-content">
-								<h3>AI Analysis</h3>
-								<div class="text-section">
-									<h5>Summary</h5>
-									<p>This is a placeholder for AI-generated summary of the medical records in this folder. The AI can analyze the documents and provide insights about the medical information contained in them.</p>
+								<div class="d-flex justify-content-between align-items-center mb-3">
+									<h3>AI Analysis</h3>
+									<button id="regenerateSummaryBtn" class="btn btn-sm btn-outline-primary" data-folder-id="{{ current_folder.id }}">
+										<i class="fas fa-sync-alt me-1"></i> Regenerate
+									</button>
 								</div>
 								
-								<div class="text-section">
-									<h5>Key Findings</h5>
-									<ul class="mb-4">
-										<li>This is a placeholder for an AI-generated finding</li>
-										<li>Another placeholder for AI-identified information</li>
-										<li>Additional placeholder for relevant medical information</li>
-									</ul>
+								{% if folder_summary %}
+								<div id="summaryTimestamp" class="small text-muted mb-3">
+									{% if summary_last_updated %}
+									Last updated: {{ summary_last_updated.strftime('%Y-%m-%d %H:%M:%S') }}
+									{% endif %}
 								</div>
 								
-								<div class="text-section">
-									<h5>Recommendations</h5>
-									<p>Placeholder for AI-generated recommendations based on the analysis of the medical records in this folder.</p>
+								<div id="summaryContent">
+									<div class="text-section">
+										<h5>Summary</h5>
+										<div id="summaryText" class="markdown-content">{{ folder_summary|safe }}</div>
+									</div>
+								</div>
+								{% else %}
+								<div class="alert alert-info">
+									<i class="fas fa-info-circle me-2"></i> No summary available for this folder. Click the "Regenerate" button to create one.
+								</div>
+								{% endif %}
+								
+								<!-- Loading spinner (hidden by default) -->
+								<div id="summaryLoading" class="text-center py-5 d-none">
+									<div class="spinner-border text-primary mb-3" role="status">
+										<span class="visually-hidden">Loading...</span>
+									</div>
+									<p>Generating summary with Gemini 2.0...</p>
+									<small class="text-muted">This may take a few moments</small>
+								</div>
+								
+								<!-- Error message (hidden by default) -->
+								<div id="summaryError" class="alert alert-danger d-none">
+									<div id="errorMessage" class="markdown-content"></div>
 								</div>
 							</div>
 						</div>
@@ -1187,4 +1321,6 @@ function showFilePreview(filePath, fileName, fileType, fileSize, uploadDate, des
     bsModal.show();
 }
 </script>
+<!-- Include folder summary script -->
+<script src="{{ url_for('static', filename='js/folder_summary.js') }}"></script>
 {% endblock %}
