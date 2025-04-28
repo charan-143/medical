@@ -40,6 +40,56 @@ def register_cli_commands(app: Flask) -> None:
     except Exception as e:
         logger.error(f"Failed to register migrate-uploads command: {str(e)}")
 
+def initialize_upload_directory(app: Flask) -> None:
+    """
+    Initialize and validate the upload directory with proper permissions.
+    Creates the directory if it doesn't exist, sets permissions, and validates write access.
+    """
+    upload_dir = app.config['UPLOAD_FOLDER']
+    logger.info(f"Initializing upload directory: {upload_dir}")
+    
+    try:
+        # Create the main upload directory if it doesn't exist
+        os.makedirs(upload_dir, exist_ok=True)
+        logger.debug(f"Upload directory exists or was created: {upload_dir}")
+        
+        # Try setting permissions (may not work on all platforms)
+        try:
+            # 0o755 = Owner can read/write/execute, others can read/execute
+            os.chmod(upload_dir, 0o755)
+            logger.debug(f"Permissions set on upload directory: 0o755")
+        except Exception as perm_err:
+            logger.warning(f"Could not set permissions on upload directory: {str(perm_err)}")
+        
+        # Validate write access by creating a test file
+        test_filename = os.path.join(upload_dir, 'write_test.tmp')
+        try:
+            with open(test_filename, 'w') as f:
+                f.write('test')
+            os.remove(test_filename)
+            logger.info(f"Successfully verified write permissions to upload directory")
+        except Exception as write_err:
+            logger.error(f"Cannot write to upload directory: {str(write_err)}")
+            raise RuntimeError(f"Upload directory is not writable: {upload_dir}")
+        
+        # Create common subdirectories that might be needed
+        for subdir in ['temp', 'user_folders']:
+            subdir_path = os.path.join(upload_dir, subdir)
+            os.makedirs(subdir_path, exist_ok=True)
+            logger.debug(f"Subdirectory exists or was created: {subdir_path}")
+        
+        # Show directory stats
+        if os.path.exists(upload_dir):
+            logger.info(f"Upload directory is ready: {upload_dir}")
+            # Count existing files for diagnostics
+            file_count = sum([len(files) for r, d, files in os.walk(upload_dir)])
+            logger.info(f"Upload directory contains {file_count} files")
+    except Exception as e:
+        logger.critical(f"Failed to initialize upload directory: {str(e)}")
+        # We don't raise the error here to allow the app to start,
+        # but upload functionality will likely be broken
+        app.config['UPLOAD_ERROR'] = str(e)
+
 def create_app(config_name: Optional[str] = None) -> Flask:
     if config_name is None:
         config_name = os.environ.get('FLASK_CONFIG', 'default')
@@ -92,7 +142,8 @@ def create_app(config_name: Optional[str] = None) -> Flask:
     else:
         logger.debug("SECRET_KEY is configured")
 
-    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    # Initialize upload directory with proper validation
+    initialize_upload_directory(app)
 
     session_interface = Session(app)
     logger.debug("Flask-Session initialized")
@@ -130,7 +181,11 @@ def create_app(config_name: Optional[str] = None) -> Flask:
             logger.debug(f"Response has session cookie: {'session' in request.cookies}")
             logger.debug(f"Response status: {response.status_code}, mimetype: {response.mimetype}")
             logger.debug(f"CSRF token in response headers: {csrf_token is not None}")
-
+        
+        # Add warning header if upload directory had initialization issues
+        if app.config.get('UPLOAD_ERROR'):
+            response.headers.set('X-Upload-Error', 'true')
+            
         return response
 
     @app.errorhandler(400)
@@ -152,6 +207,19 @@ def create_app(config_name: Optional[str] = None) -> Flask:
             return render_template('errors/400.html', error="CSRF validation failed. Please go back and try again."), 400
 
         return render_template('errors/400.html'), 400
+    
+    # Check for upload directory errors and flash a message for admin users
+    @app.before_request
+    def check_upload_directory_errors() -> None:
+        if app.config.get('UPLOAD_ERROR') and hasattr(request, 'endpoint') and request.endpoint \
+            and not request.endpoint.startswith('static') and session.get('_user_id'):
+            from models import User
+            user = User.query.get(session.get('_user_id'))
+            if user and user.is_admin and not session.get('upload_error_shown'):
+                from flask import flash
+                error_msg = app.config.get('UPLOAD_ERROR')
+                flash(f'Upload directory error: {error_msg}. File uploads may not work correctly.', 'danger')
+                session['upload_error_shown'] = True
 
     from blueprints.auth.routes import auth as auth_blueprint
     app.register_blueprint(auth_blueprint, url_prefix='/auth')

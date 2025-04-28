@@ -951,36 +951,158 @@ endblock %} {% block styles %} {{ super() }}
 	</div>
 </div>
 {% endblock %} {% block scripts %} {{ super() }}
+<!-- Dependencies in proper order -->
+<!-- PDF processor script only if needed -->
+{% if viewing_document and viewing_document.file_type.lower() == 'pdf' %}
+<script src="{{ url_for('static', filename='js/pdf_processor.js') }}"></script>
+{% endif %}
+
 <script>
 // Global variables
 let selectedFiles = [];
+let uploadInProgress = false;
+let folderCreationInProgress = false;
+
+// Initialize debug logging
+const DEBUG = true;
+
+// Debug logger
+function logDebug(message, data = null) {
+    if (DEBUG) {
+        const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+        if (data) {
+            console.log(`[${timestamp}] 📁 ${message}`, data);
+        } else {
+            console.log(`[${timestamp}] 📁 ${message}`);
+        }
+    }
+}
 
 // Main initialization
 document.addEventListener('DOMContentLoaded', function() {
+    logDebug('Initializing records page');
+    
     // Get required elements
     const fileInput = document.getElementById('fileUpload');
     const fileList = document.getElementById('fileList');
     const uploadButton = document.getElementById('uploadButton');
+    const dragDropArea = document.getElementById('dragDropArea');
+
+    // Check for CSRF token
+    const csrfToken = document.querySelector('input[name="csrf_token"]');
+    if (!csrfToken) {
+        console.error('CSRF token not found in form! File uploads will fail.');
+    } else {
+        logDebug('CSRF token found', { tokenAvailable: !!csrfToken.value });
+    }
+    
+    // Validate upload form
+    const uploadForm = document.getElementById('uploadForm');
+    if (uploadForm) {
+        logDebug('Upload form found', { 
+            action: uploadForm.action,
+            method: uploadForm.method,
+            enctype: uploadForm.enctype
+        });
+    }
 
     // File selection handler
     if (fileInput) {
+        logDebug('File input initialized', { multiple: fileInput.multiple, accept: fileInput.accept });
+        
         fileInput.addEventListener('change', function() {
-            console.log('File input change detected');
+            logDebug('File input change detected', { filesLength: this.files ? this.files.length : 0 });
+            
             if (this.files && this.files.length > 0) {
-                console.log(`${this.files.length} files selected`);
-                selectedFiles = Array.from(this.files);
+                // Check file types
+                const validFiles = Array.from(this.files).filter(file => {
+                    const ext = file.name.split('.').pop().toLowerCase();
+                    const validExtensions = ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'doc', 'docx', 'xls', 'xlsx'];
+                    return validExtensions.includes(ext);
+                });
+                
+                if (validFiles.length !== this.files.length) {
+                    showMessage(`${this.files.length - validFiles.length} invalid file(s) were removed`, "warning");
+                }
+                
+                logDebug(`${validFiles.length} valid files selected`, {
+                    totalFiles: this.files.length,
+                    validFiles: validFiles.length,
+                    fileTypes: validFiles.map(f => f.name.split('.').pop().toLowerCase())
+                });
+                
+                selectedFiles = validFiles;
                 updateFileList();
-                showMessage(`${this.files.length} files selected`, "success");
+                showMessage(`${validFiles.length} files selected`, "success");
+            } else {
+                logDebug('No files selected or file input canceled');
+                selectedFiles = [];
+                updateFileList();
             }
         });
     }
 
+    // Drag and drop handling
+    if (dragDropArea) {
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dragDropArea.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dragDropArea.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dragDropArea.addEventListener(eventName, unhighlight, false);
+        });
+
+        function highlight() {
+            dragDropArea.classList.add('highlight');
+        }
+
+        function unhighlight() {
+            dragDropArea.classList.remove('highlight');
+        }
+
+        dragDropArea.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            
+            logDebug('Files dropped', { count: files.length });
+            
+            if (files.length > 0 && fileInput) {
+                // We can't directly set the files to fileInput
+                // But we can trigger the change event after keeping the files
+                selectedFiles = Array.from(files);
+                updateFileList();
+                showMessage(`${files.length} files dropped`, "success");
+            }
+        }
+    }
+
     // Upload button handler
     if (uploadButton) {
-        uploadButton.addEventListener('click', uploadFiles);
+        uploadButton.addEventListener('click', function() {
+            logDebug('Upload button clicked', { 
+                filesSelected: selectedFiles.length,
+                uploadInProgress: uploadInProgress
+            });
+            
+            if (!uploadInProgress) {
+                uploadFiles();
+            } else {
+                showMessage('Upload already in progress', 'warning');
+            }
+        });
     }
 });
-
 // Helper function to update file list
 function updateFileList() {
     const fileList = document.getElementById('fileList');
@@ -1040,32 +1162,76 @@ function uploadFiles() {
         return;
     }
 
-    const formData = new FormData();
+    // Get CSRF token
     const csrfToken = document.querySelector('input[name="csrf_token"]');
     
-    if (!csrfToken) {
-        showMessage('CSRF token not found', 'danger');
+    if (!csrfToken || !csrfToken.value) {
+        showMessage('CSRF token not found or invalid. Please refresh the page and try again.', 'danger');
+        logDebug('CSRF token validation failed', { 
+            tokenExists: !!csrfToken,
+            tokenValue: csrfToken ? (csrfToken.value ? 'Has value' : 'Empty') : 'No token'
+        });
         return;
     }
     
-    formData.append('csrf_token', csrfToken.value);
-
+    logDebug('CSRF token validated successfully', { 
+        tokenLength: csrfToken.value.length
+    });
+    
     // Check if we need to create a new folder
     const newFolderName = document.getElementById('createFolder').value.trim();
+    
+    // Update UI elements
+    const uploadButton = document.getElementById('uploadButton');
+    const progressContainer = document.getElementById('overallProgressContainer');
+    
+    // Show loading state
+    uploadButton.disabled = true;
+    uploadButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Preparing upload...';
+    
     if (newFolderName) {
+        // Check if folder name is valid
+        if (newFolderName.length < 1 || newFolderName.length > 50) {
+            showMessage('Folder name must be between 1 and 50 characters', 'warning');
+            uploadButton.disabled = false;
+            uploadButton.innerHTML = 'Upload Files';
+            return;
+        }
+        
+        // Check if folder creation is already in progress
+        if (folderCreationInProgress) {
+            showMessage('Folder creation already in progress', 'warning');
+            return;
+        }
+        
+        // Set flag to prevent duplicate folder creation attempts
+        folderCreationInProgress = true;
+        
         // Need to create a folder first, then upload to it
+        logDebug('Creating new folder before upload:', newFolderName);
+        
+        uploadButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Creating folder...';
+        
         createNewFolder(newFolderName)
             .then(folderId => {
+                folderCreationInProgress = false;
                 if (folderId) {
+                    logDebug('Folder created successfully with ID:', folderId);
+                    // Clear the folder name input after successful creation
+                    document.getElementById('createFolder').value = '';
                     uploadFilesToFolder(folderId);
                 } else {
+                    logDebug('Folder created but no folder ID returned');
                     showMessage('Failed to create folder. Files will be uploaded to current location.', 'warning');
                     proceedWithUpload();
                 }
             })
             .catch(error => {
+                folderCreationInProgress = false;
+                uploadButton.disabled = false;
+                uploadButton.innerHTML = 'Upload Files';
                 showMessage('Error creating folder: ' + error.message, 'danger');
-                console.error('Folder creation error:', error);
+                logDebug('Folder creation error:', error);
             });
     } else {
         // Just upload to current folder
@@ -1074,13 +1240,18 @@ function uploadFiles() {
 
     // Inner function to handle the actual upload
     function proceedWithUpload() {
+        const formData = new FormData();
+        
+        // Add CSRF token
+        formData.append('csrf_token', csrfToken.value);
+        
         // Add folder ID if present
         const folderId = document.getElementById('uploadFolderId');
         if (folderId && folderId.value) {
-            console.log('Using folder ID:', folderId.value);
+            logDebug('Using folder ID for upload', { folderId: folderId.value });
             formData.append('folder_id', folderId.value);
         } else {
-            console.log('No folder ID specified, uploading to root');
+            logDebug('No folder ID specified, uploading to root');
         }
 
         // Add files to form data
@@ -1088,40 +1259,159 @@ function uploadFiles() {
             formData.append('files[]', file);
         });
 
-    // Update UI elements
-    const uploadButton = document.getElementById('uploadButton');
-    const progressContainer = document.getElementById('overallProgressContainer');
-
-    // Show loading state
-    uploadButton.disabled = true;
-    uploadButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading...';
-    progressContainer.classList.remove('d-none');
+        // Update UI for upload process
+        uploadButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading...';
+        progressContainer.classList.remove('d-none');
+        
+        // Get the progress bar
+        const progressBar = document.getElementById('overallProgress');
+        if (progressBar) {
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+            progressBar.setAttribute('aria-valuenow', 0);
+        }
 
         // Send upload request
         const uploadForm = document.getElementById('uploadForm');
-        console.log('Uploading files...');
-        fetch(uploadForm.action, {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showMessage('Upload successful', 'success');
-                setTimeout(() => window.location.reload(), 1500);
-            } else {
-                throw new Error(data.message || 'Upload failed');
+        console.log('Uploading files to:', uploadForm.action);
+        
+        // Use XMLHttpRequest for upload progress tracking
+        const xhr = new XMLHttpRequest();
+        
+        // Set upload in progress flag
+        uploadInProgress = true;
+        
+        // Set up progress event
+        xhr.upload.addEventListener('progress', function(e) {
+            if (e.lengthComputable) {
+                const percentComplete = Math.round((e.loaded / e.total) * 100);
+                logDebug(`Upload progress: ${percentComplete}%`, {
+                    loaded: formatFileSize(e.loaded),
+                    total: formatFileSize(e.total),
+                    filesCount: selectedFiles.length
+                });
+                
+                if (progressBar) {
+                    progressBar.style.width = percentComplete + '%';
+                    progressBar.textContent = percentComplete + '%';
+                    progressBar.setAttribute('aria-valuenow', percentComplete);
+                    
+                    // Update button text with progress
+                    if (percentComplete < 100) {
+                        uploadButton.innerHTML = `<span class="spinner-border spinner-border-sm"></span> Uploading ${percentComplete}%`;
+                    } else {
+                        uploadButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Processing...';
+                    }
+                }
             }
-        })
-        .catch(error => {
-            showMessage(error.message, 'danger');
-            console.error('Upload error:', error);
-        })
-        .finally(() => {
+        });
+        
+        // Handle load completion
+        xhr.addEventListener('load', function() {
+            // Log response information
+            logDebug('Upload request completed', {
+                status: xhr.status,
+                statusText: xhr.statusText,
+                responseType: xhr.responseType,
+                responseHeaders: xhr.getAllResponseHeaders()
+            });
+            
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    logDebug('Parsed server response', response);
+                    
+                    if (response.success) {
+                        showMessage('Upload successful!', 'success');
+                        logDebug('Upload successful, reloading page in 1.5 seconds');
+                        setTimeout(() => window.location.reload(), 1500);
+                    } else {
+                        const errorMsg = response.message || 'Upload failed';
+                        logDebug('Server reported failure', { message: errorMsg, details: response.errors });
+                        
+                        // Show specific error messages if available
+                        if (response.errors && response.errors.length > 0) {
+                            showMessage(errorMsg + ': ' + response.errors.join(', '), 'danger');
+                        } else {
+                            showMessage(errorMsg, 'danger');
+                        }
+                    }
+                } catch (e) {
+                    logDebug('Error parsing server response', { 
+                        error: e.message,
+                        responseText: xhr.responseText.substring(0, 200) + '...' // Log only first 200 chars
+                    });
+                    showMessage('Error processing server response: ' + e.message, 'danger');
+                }
+            } else {
+                let errorMsg = 'Server error: ' + xhr.status;
+                logDebug('Server error response', {
+                    status: xhr.status,
+                    statusText: xhr.statusText,
+                    responseText: xhr.responseText.substring(0, 200) + '...' // Log only first 200 chars
+                });
+                
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    errorMsg = response.message || errorMsg;
+                    
+                    if (response.errors && response.errors.length > 0) {
+                        errorMsg += ': ' + response.errors.join(', ');
+                    }
+                } catch (e) {
+                    logDebug('Could not parse error response', { error: e.message });
+                }
+                
+                showMessage(errorMsg, 'danger');
+            }
+            
             uploadButton.disabled = false;
             uploadButton.innerHTML = 'Upload Files';
             progressContainer.classList.add('d-none');
+            uploadInProgress = false;
         });
+        
+        // Handle errors
+        xhr.addEventListener('error', function() {
+            logDebug('Network error during upload');
+            showMessage('Network error during upload. Please try again.', 'danger');
+            
+            uploadButton.disabled = false;
+            uploadButton.innerHTML = 'Upload Files';
+            progressContainer.classList.add('d-none');
+            uploadInProgress = false;
+            
+            // Try to recover any information about the failed request
+            logDebug('Upload failed with error', {
+                status: xhr.status,
+                statusText: xhr.statusText || 'No status text',
+                responseURL: xhr.responseURL || 'No response URL'
+            });
+        });
+        
+        // Handle timeout
+        xhr.addEventListener('timeout', function() {
+            logDebug('Upload request timed out');
+            showMessage('Upload request timed out. Please try again.', 'danger');
+            
+            uploadButton.disabled = false;
+            uploadButton.innerHTML = 'Upload Files';
+            progressContainer.classList.add('d-none');
+            uploadInProgress = false;
+        });
+        
+        // Set timeout (30 seconds for each file is a reasonable default)
+        xhr.timeout = 30000 * selectedFiles.length; // 30 seconds per file
+        logDebug(`Setting upload timeout to ${xhr.timeout}ms for ${selectedFiles.length} files`);
+        
+        // Open and send the request
+        xhr.open('POST', uploadForm.action, true);
+        
+        // Set the proper headers
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        xhr.setRequestHeader('X-CSRFToken', csrfToken.value);
+        
+        xhr.send(formData);
     }
 
     // Function to upload files to a specific folder
@@ -1135,31 +1425,115 @@ function uploadFiles() {
 
 // Function to create a new folder
 function createNewFolder(folderName) {
-    console.log('Creating folder:', folderName);
-    const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+    logDebug('Creating folder:', folderName);
+    
+    // Get CSRF token
+    const csrfToken = document.querySelector('input[name="csrf_token"]');
+    if (!csrfToken) {
+        return Promise.reject(new Error('CSRF token not found. Please refresh the page.'));
+    }
+    
     const currentFolderId = document.getElementById('uploadFolderId').value;
     
+    // Create FormData object for the folder creation request
     const formData = new FormData();
-    formData.append('csrf_token', csrfToken);
+    formData.append('csrf_token', csrfToken.value);
     formData.append('folder_name', folderName);
     
-    // Set parent_id to current folder if we're in a subfolder
+    // Add a specific identifier for folder creation requests to distinguish them
+    // from file upload requests in the route handler
+    formData.append('create_folder', 'true');
+    
+    // Set parent_id if we're in a subfolder
     if (currentFolderId) {
         formData.append('parent_id', currentFolderId);
     }
     
-    return fetch("{{ url_for('dashboard.upload') }}", {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success && data.folder_id) {
-            showMessage(`Folder "${folderName}" created successfully`, 'success');
-            return data.folder_id;
-        } else {
-            throw new Error(data.message || 'Failed to create folder');
-        }
+    // Show a creating folder message
+    showMessage(`Creating folder "${folderName}"...`, 'info');
+    
+    // Return a promise for the folder creation request
+    return new Promise((resolve, reject) => {
+        // Use XMLHttpRequest for better compatibility
+        const xhr = new XMLHttpRequest();
+        
+        xhr.open('POST', "{{ url_for('dashboard.upload') }}", true);
+        
+        // Set proper headers
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        xhr.setRequestHeader('X-CSRFToken', csrfToken.value);
+        xhr.setRequestHeader('X-Create-Folder', 'true');
+        
+        // Add response handler
+        xhr.onload = function() {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    
+                    if (response.success && response.folder_id) {
+                        logDebug(`Folder "${folderName}" created with ID: ${response.folder_id}`);
+                        showMessage(`Folder "${folderName}" created successfully`, 'success');
+                        resolve(response.folder_id);
+                    } else {
+                        logDebug('Folder creation failed:', response.message || 'Unknown error');
+                        reject(new Error(response.message || 'Failed to create folder'));
+                    }
+                } catch (error) {
+                    logDebug('Error parsing server response:', error);
+                    reject(new Error('Error processing server response'));
+                }
+            } else {
+                // Handle HTTP errors
+                let errorMessage = `Server error (${xhr.status})`;
+                
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    errorMessage = response.message || errorMessage;
+                } catch (e) {
+                    // If we can't parse the response, use the status text
+                    errorMessage = xhr.statusText || errorMessage;
+                }
+                
+                logDebug('Folder creation HTTP error:', errorMessage);
+                reject(new Error(errorMessage));
+            }
+        };
+        
+        // Handle network errors
+        xhr.onerror = function() {
+            logDebug('Network error during folder creation');
+            reject(new Error('Network error. Please check your connection and try again.'));
+        };
+        
+        // Handle timeout
+        xhr.ontimeout = function() {
+            logDebug('Timeout during folder creation');
+            folderCreationInProgress = false;
+            reject(new Error('Request timed out. Please try again.'));
+        };
+        
+        // Set timeout value
+        xhr.timeout = 20000; // 20 seconds timeout
+        
+        // Handle upload progress (mainly for debugging)
+        xhr.upload.addEventListener('progress', function(e) {
+            if (e.lengthComputable) {
+                const percentComplete = Math.round((e.loaded / e.total) * 100);
+                logDebug(`Folder creation request progress: ${percentComplete}%`);
+            }
+        });
+        
+        // Log request details before sending
+        logDebug('Sending folder creation request', {
+            url: "{{ url_for('dashboard.upload') }}",
+            folderName: folderName,
+            currentFolderId: currentFolderId,
+            csrfTokenPresent: !!csrfToken.value,
+            formDataEntries: Array.from(formData.entries()).map(entry => entry[0])
+        });
+        
+        // Send the request
+        xhr.send(formData);
     });
 }
 
