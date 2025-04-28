@@ -1,18 +1,19 @@
-from flask import current_app
+from flask import current_app, Flask
 import logging
 from sqlalchemy import text, inspect
 from datetime import datetime
+from sqlalchemy.engine import Inspector
 
 logger = logging.getLogger(__name__)
 
-def create_folder_summaries_table():
-    """Create folder_summaries table for storing AI-generated summaries"""
+def create_folder_summaries_table() -> None:
+    """Create folder_summaries table for storing AI-generated summaries."""
     from extensions import db
     
     try:
         # Check if table already exists to avoid errors
-        inspector = inspect(db.engine)
-        existing_tables = inspector.get_table_names()
+        inspector: Inspector = inspect(db.engine)
+        existing_tables: list[str] = inspector.get_table_names()
         
         if 'folder_summaries' in existing_tables:
             logger.info("folder_summaries table already exists")
@@ -51,14 +52,14 @@ def create_folder_summaries_table():
         logger.error(f"Error creating folder_summaries table: {str(e)}")
         raise
 
-def drop_folder_summaries_table():
-    """Drop folder_summaries table (rollback)"""
+def drop_folder_summaries_table() -> None:
+    """Drop folder_summaries table (rollback)."""
     from extensions import db
     
     try:
         # Check if table exists before attempting to drop
-        inspector = inspect(db.engine)
-        existing_tables = inspector.get_table_names()
+        inspector: Inspector = inspect(db.engine)
+        existing_tables: list[str] = inspector.get_table_names()
         
         if 'folder_summaries' not in existing_tables:
             logger.info("folder_summaries table does not exist, nothing to drop")
@@ -74,10 +75,10 @@ def drop_folder_summaries_table():
         logger.error(f"Error dropping folder_summaries table: {str(e)}")
         raise
 
-def register_migration_command(app):
-    """Register the database migration commands"""
+def register_migration_command(app: Flask) -> None:
+    """Register the database migration commands."""
     @app.cli.command('create-folder-summaries')
-    def create_folder_summaries_command():
+    def create_folder_summaries_command() -> None:
         """Create folder_summaries table for storing AI-generated summaries."""
         try:
             create_folder_summaries_table()
@@ -87,7 +88,7 @@ def register_migration_command(app):
             raise
             
     @app.cli.command('drop-folder-summaries')
-    def drop_folder_summaries_command():
+    def drop_folder_summaries_command() -> None:
         """Drop folder_summaries table (rollback)."""
         try:
             drop_folder_summaries_table()
@@ -95,4 +96,3 @@ def register_migration_command(app):
         except Exception as e:
             print(f"Error dropping folder_summaries table: {e}")
             raise
-

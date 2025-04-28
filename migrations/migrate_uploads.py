@@ -5,44 +5,45 @@ import os
 from flask import current_app
 from models import Document, db
 import logging
+from typing import Dict, List, Optional
 
-def compute_file_hash(file_path):
+def compute_file_hash(file_path: Path) -> str:
     """Compute SHA-256 hash of a file"""
     sha256_hash = hashlib.sha256()
-    with open(file_path, 'rb') as f:
+    with file_path.open('rb') as f:
         for byte_block in iter(lambda: f.read(4096), b""):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
 
-def migrate_uploads():
+def migrate_uploads() -> None:
     """Reorganize uploaded files and remove duplicates"""
-    logger = current_app.logger
+    logger: logging.Logger = current_app.logger
     logger.info("Starting file migration process")
     
     # Get base upload directory
-    base_dir = Path(current_app.root_path) / 'static' / 'uploads'
+    base_dir: Path = Path(current_app.root_path) / 'static' / 'uploads'
     if not base_dir.exists():
         logger.warning("Upload directory does not exist")
         return
     
     # Dictionary to store file hashes and their corresponding document
-    file_hashes = {}
+    file_hashes: Dict[str, Document] = {}
     # Dictionary to store files that need to be moved
-    files_to_move = {}
+    files_to_move: Dict[int, Dict[str, Optional[Path | Document]]] = {}
     # List to store duplicates for removal
-    duplicates = []
+    duplicates: List[Dict[str, Optional[Path | Document]]] = []
     
     try:
         # First pass: compute hashes and identify duplicates
         logger.info("Computing file hashes and identifying duplicates")
         for doc in Document.query.all():
-            current_path = base_dir / doc.filename
+            current_path: Path = base_dir / doc.filename
             if not current_path.exists():
                 logger.warning(f"File not found for document {doc.id}: {doc.filename}")
                 continue
             
             # Compute hash of actual file
-            file_hash = compute_file_hash(current_path)
+            file_hash: str = compute_file_hash(current_path)
             
             # Update the document's hash if it doesn't match
             if doc.content_hash != file_hash:
@@ -70,15 +71,15 @@ def migrate_uploads():
         # Second pass: move files to proper folders
         logger.info(f"Moving {len(files_to_move)} files to their folders")
         for file_info in files_to_move.values():
-            doc = file_info['doc']
-            source = file_info['source']
-            folder_path = base_dir / str(doc.folder_id)
+            doc: Document = file_info['doc']
+            source: Path = file_info['source']
+            folder_path: Path = base_dir / str(doc.folder_id)
             
             # Create folder if it doesn't exist
             folder_path.mkdir(parents=True, exist_ok=True)
             
             # Move file to its proper folder
-            target = folder_path / doc.filename
+            target: Path = folder_path / doc.filename
             if source != target and source.exists():  # Only move if paths are different and source exists
                 try:
                     shutil.move(str(source), str(target))
@@ -92,9 +93,9 @@ def migrate_uploads():
         # Third pass: handle duplicates
         logger.info(f"Processing {len(duplicates)} duplicate files")
         for dup in duplicates:
-            original_doc = dup['original_doc']
-            duplicate_doc = dup['doc']
-            duplicate_path = dup['path']
+            original_doc: Document = dup['original_doc']
+            duplicate_doc: Document = dup['doc']
+            duplicate_path: Path = dup['path']
             
             # Update the duplicate document to point to the original file
             duplicate_doc.content_hash = original_doc.content_hash
@@ -135,6 +136,3 @@ def migrate_uploads():
         db.session.rollback()
         logger.error(f"Error during migration: {str(e)}")
         raise
-
-# Function is now registered directly in app.py
-
