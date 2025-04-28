@@ -136,12 +136,62 @@ def upload() -> Union[str, 'Response']:
     # Check if this is an AJAX request
     is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
     
+    # Check if upload directory is properly initialized
+    if current_app.config.get('UPLOAD_ERROR'):
+        error_msg = f"Upload system is unavailable: {current_app.config.get('UPLOAD_ERROR')}"
+        logger.error(error_msg)
+        if is_ajax:
+            return jsonify({
+                'success': False,
+                'message': error_msg
+            }), 503  # Service Unavailable
+        else:
+            flash(error_msg, 'error')
+            return redirect(url_for('dashboard.records'))
+    
+    # Verify upload directory exists and is writable
+    upload_dir = current_app.config['UPLOAD_FOLDER']
+    if not os.path.exists(upload_dir):
+        error_msg = f"Upload directory does not exist: {upload_dir}"
+        logger.error(error_msg)
+        try:
+            # Try to create it
+            os.makedirs(upload_dir, exist_ok=True)
+            logger.info(f"Created missing upload directory: {upload_dir}")
+        except Exception as e:
+            if is_ajax:
+                return jsonify({
+                    'success': False,
+                    'message': f"Could not create upload directory: {str(e)}"
+                }), 500
+            else:
+                flash(f"Upload system error: {str(e)}", 'error')
+                return redirect(url_for('dashboard.records'))
+    
+    # Check write permissions with a quick test
+    try:
+        test_file = os.path.join(upload_dir, f"write_test_{uuid.uuid4().hex[:8]}.tmp")
+        with open(test_file, 'w') as f:
+            f.write('test')
+        os.remove(test_file)
+    except Exception as e:
+        error_msg = f"Upload directory is not writable: {str(e)}"
+        logger.error(error_msg)
+        if is_ajax:
+            return jsonify({
+                'success': False,
+                'message': "Cannot write to upload directory. Please contact administrator."
+            }), 500
+        else:
+            flash("Upload system error: Permission denied", 'error')
+            return redirect(url_for('dashboard.records'))
+    
     if request.method == 'POST':
         # Folder creation request (from AJAX)
         folder_name = request.form.get('folder_name')
         if is_ajax and folder_name and not request.files:
             try:
-                # Create a new folder
+                # Create a new folder in database
                 folder = Folder(
                     name=folder_name,
                     user_id=current_user.id,
@@ -150,6 +200,15 @@ def upload() -> Union[str, 'Response']:
                 db.session.add(folder)
                 db.session.commit()
                 
+                # Create the corresponding physical directory if it doesn't exist
+                physical_folder_path = os.path.join(upload_dir, str(folder.id))
+                try:
+                    os.makedirs(physical_folder_path, exist_ok=True)
+                    logger.info(f"Created physical folder directory: {physical_folder_path}")
+                except Exception as dir_err:
+                    logger.warning(f"Could not create physical folder directory: {str(dir_err)}")
+                    # We don't fail the request here as the database entry was created successfully
+                
                 return jsonify({
                     'success': True,
                     'folder_id': folder.id,
@@ -157,6 +216,7 @@ def upload() -> Union[str, 'Response']:
                 })
             except Exception as e:
                 db.session.rollback()
+                logger.error(f"Error creating folder '{folder_name}': {str(e)}")
                 return jsonify({
                     'success': False,
                     'message': f'Error creating folder: {str(e)}'
@@ -206,14 +266,33 @@ def upload() -> Union[str, 'Response']:
                     continue
                     
                 try:
+                    # Verify the destination folder exists
+                    if folder_id:
+                        folder_path = os.path.join(upload_dir, str(folder_id))
+                        if not os.path.exists(folder_path):
+                            try:
+                                os.makedirs(folder_path, exist_ok=True)
+                                logger.info(f"Created missing folder directory: {folder_path}")
+                            except Exception as folder_err:
+                                error_msg = f"Could not create folder directory: {str(folder_err)}"
+                                logger.error(error_msg)
+                                error_messages.append(f"Error with '{file.filename}': {error_msg}")
+                                continue
+                    
+                    # Create and save the document
                     document = Document(
                         user_id=current_user.id,
                         folder_id=folder_id if folder else None,
                         description=description
                     )
-                    document.save_file(file)
-                    db.session.add(document)
-                    uploaded_count += 1
+                    
+                    try:
+                        document.save_file(file)
+                        db.session.add(document)
+                        uploaded_count += 1
+                    except PermissionError as perm_err:
+                        error_messages.append(f"Permission denied saving '{file.filename}': {str(perm_err)}")
+                        logger.error(f"Permission error for file '{file.filename}': {str(perm_err)}")
                 except Exception as e:
                     error_messages.append(f"Error with '{file.filename}': {str(e)}")
                     logger.error(f"Upload error for file '{file.filename}': {str(e)}")
@@ -253,15 +332,32 @@ def upload() -> Union[str, 'Response']:
                 return redirect(request.referrer or url_for('dashboard.records'))
 
             try:
+                # Verify the destination folder exists
+                if folder_id:
+                    folder_path = os.path.join(upload_dir, str(folder_id))
+                    if not os.path.exists(folder_path):
+                        try:
+                            os.makedirs(folder_path, exist_ok=True)
+                            logger.info(f"Created missing folder directory: {folder_path}")
+                        except Exception as folder_err:
+                            flash(f"Error creating folder directory: {str(folder_err)}", 'error')
+                            return redirect(url_for('dashboard.records', folder_id=folder_id))
+                
+                # Create and save the document
                 document = Document(
                     user_id=current_user.id,
                     folder_id=folder_id if folder else None,
                     description=request.form.get('description', '')
                 )
-                document.save_file(file)
-                db.session.add(document)
-                db.session.commit()
-                flash(f'File "{document.original_filename}" uploaded successfully', 'success')
+                
+                try:
+                    document.save_file(file)
+                    db.session.add(document)
+                    db.session.commit()
+                    flash(f'File "{document.original_filename}" uploaded successfully', 'success')
+                except PermissionError:
+                    db.session.rollback()
+                    flash(f'Permission error saving file. Please check directory permissions.', 'error')
             except Exception as e:
                 db.session.rollback()
                 flash(f'Error uploading file: {str(e)}', 'error')
