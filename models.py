@@ -6,184 +6,142 @@ import hashlib
 import bcrypt
 import json
 from pathlib import Path
+from typing import Optional, List, Dict, Union
 from flask import current_app
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import google.generativeai as genai
 
-# Import db from extensions to avoid circular imports
-from extensions import db
-
-# User loader function is defined in extensions.py
+from extensions import db  # Import db from extensions to avoid circular imports
 
 
 class User(db.Model, UserMixin):
     """User model for authentication and profile information"""
     __tablename__ = 'users'
 
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(64), unique=True, index=True, nullable=False)
-    email = db.Column(db.String(120), unique=True, index=True, nullable=False)
-    password_hash = db.Column(db.String(128), nullable=False)
-    
-    # Profile information
-    first_name = db.Column(db.String(64))
-    last_name = db.Column(db.String(64))
-    date_of_birth = db.Column(db.Date)
-    phone = db.Column(db.String(20))
-    address = db.Column(db.String(256))
-    
-    # Avatar/profile picture
-    avatar = db.Column(db.String(128), default='avatar.png')
-    
-    # Account management
-    is_active = db.Column(db.Boolean, default=True)
-    is_admin = db.Column(db.Boolean, default=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    last_login = db.Column(db.DateTime)
-    
-    # Relationships
+    id: int = db.Column(db.Integer, primary_key=True)
+    username: str = db.Column(db.String(64), unique=True, index=True, nullable=False)
+    email: str = db.Column(db.String(120), unique=True, index=True, nullable=False)
+    password_hash: str = db.Column(db.String(128), nullable=False)
+
+    first_name: Optional[str] = db.Column(db.String(64))
+    last_name: Optional[str] = db.Column(db.String(64))
+    date_of_birth: Optional[datetime] = db.Column(db.Date)
+    phone: Optional[str] = db.Column(db.String(20))
+    address: Optional[str] = db.Column(db.String(256))
+    avatar: str = db.Column(db.String(128), default='avatar.png')
+    is_active: bool = db.Column(db.Boolean, default=True)
+    is_admin: bool = db.Column(db.Boolean, default=False)
+    created_at: datetime = db.Column(db.DateTime, default=datetime.utcnow)
+    last_login: Optional[datetime] = db.Column(db.DateTime)
+
     folders = db.relationship('Folder', backref='owner', lazy='dynamic', cascade='all, delete-orphan')
     documents = db.relationship('Document', backref='owner', lazy='dynamic', cascade='all, delete-orphan')
     vitals = db.relationship('VitalMeasurement', backref='user', lazy='dynamic', cascade='all, delete-orphan')
     medical_visits = db.relationship('MedicalVisit', backref='patient', lazy='dynamic', cascade='all, delete-orphan')
     conversations = db.relationship('Conversation', backref='user', lazy='dynamic', cascade='all, delete-orphan')
-    
-    def __init__(self, **kwargs):
+
+    def __init__(self, **kwargs) -> None:
         super(User, self).__init__(**kwargs)
-    
-    def set_password(self, password):
+
+    def set_password(self, password: str) -> None:
         """Generate password hash using bcrypt"""
         try:
-            # Generate a salt and hash the password
             salt = bcrypt.gensalt()
             password_hash = bcrypt.hashpw(password.encode('utf-8'), salt)
             self.password_hash = password_hash.decode('utf-8')
         except Exception as e:
             raise ValueError(f"Error setting password: {str(e)}")
-    
-    def check_password(self, password):
+
+    def check_password(self, password: str) -> bool:
         """Verify password against stored hash"""
         try:
             return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
         except Exception as e:
             raise ValueError(f"Error checking password: {str(e)}")
-    
+
     @property
-    def full_name(self):
+    def full_name(self) -> str:
         """Return user's full name or username if not available"""
         if self.first_name and self.last_name:
             return f"{self.first_name} {self.last_name}"
         return self.username
-    
-    def update_last_login(self):
+
+    def update_last_login(self) -> None:
         """Update last login timestamp"""
         self.last_login = datetime.utcnow()
         db.session.commit()
-    
-    def __repr__(self):
+
+    def __repr__(self) -> str:
         return f'<User {self.username}>'
 
 
 class Folder(db.Model):
     """Folder model for organizing documents"""
     __tablename__ = 'folders'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    parent_id = db.Column(db.Integer, db.ForeignKey('folders.id'), nullable=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # Relationships
+
+    id: int = db.Column(db.Integer, primary_key=True)
+    name: str = db.Column(db.String(100), nullable=False)
+    parent_id: Optional[int] = db.Column(db.Integer, db.ForeignKey('folders.id'), nullable=True)
+    user_id: int = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at: datetime = db.Column(db.DateTime, default=datetime.utcnow)
+
     documents = db.relationship('Document', backref='folder', lazy='dynamic', cascade='all, delete-orphan')
     children = db.relationship('Folder', backref=db.backref('parent', remote_side=[id]), lazy='dynamic')
-    # Note: FolderSummary relationship is defined in the FolderSummary model
-    
-    def __repr__(self):
+
+    def __repr__(self) -> str:
         return f'<Folder {self.name}>'
 
 
-
 class FolderSummary(db.Model):
-    """Model for storing AI-generated summaries of folder contents using Gemini 2.0"""
+    """Model for storing AI-generated summaries of folder contents"""
     __tablename__ = 'folder_summaries'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    folder_id = db.Column(db.Integer, db.ForeignKey('folders.id'), nullable=False, unique=True)
-    summary_text = db.Column(db.Text, nullable=True)
-    last_updated = db.Column(db.DateTime, default=datetime.utcnow)
-    file_hash = db.Column(db.String(128), nullable=True)
-    
-    # Add minimum time between regenerations (30 minutes)
-    REGENERATION_COOLDOWN = 1800  # seconds
-    
-    # Relationship
+
+    id: int = db.Column(db.Integer, primary_key=True)
+    folder_id: int = db.Column(db.Integer, db.ForeignKey('folders.id'), nullable=False, unique=True)
+    summary_text: Optional[str] = db.Column(db.Text, nullable=True)
+    last_updated: datetime = db.Column(db.DateTime, default=datetime.utcnow)
+    file_hash: Optional[str] = db.Column(db.String(128), nullable=True)
+
+    REGENERATION_COOLDOWN: int = 1800  # seconds
+
     folder = db.relationship('Folder', backref=db.backref('summary', uselist=False, cascade='all, delete-orphan'))
-    
-    def __repr__(self):
+
+    def __repr__(self) -> str:
         return f'<FolderSummary for folder_id {self.folder_id}>'
-    
+
     @staticmethod
-    def calculate_folder_hash(folder_id):
-        """
-        Calculate a hash representing the state of all files in a folder.
-        This hash changes when files are added, removed, or modified.
-        """
+    def calculate_folder_hash(folder_id: int) -> Optional[str]:
+        """Calculate a hash representing the state of all files in a folder."""
         try:
-            # Get all documents in the folder
             documents = Document.query.filter_by(folder_id=folder_id).all()
-            
-            # Sort by filename to ensure consistent order
             documents.sort(key=lambda x: x.filename)
-            
-            # Create a list of (filename, file_hash, file_size) tuples
             file_data = [(doc.filename, doc.content_hash, doc.file_size) for doc in documents]
-            
-            # Convert to string and hash
             file_data_str = json.dumps(file_data)
             folder_hash = hashlib.sha256(file_data_str.encode()).hexdigest()
-            
             return folder_hash
         except Exception as e:
             current_app.logger.error(f"Error calculating folder hash: {str(e)}")
             return None
-    
+
     @staticmethod
-    def needs_update(folder_id, current_hash=None, force_refresh=False):
-        """
-        Check if the summary needs to be updated based on hash changes and cooldown period.
-        
-        Args:
-            folder_id: The ID of the folder to check
-            current_hash: Optional pre-calculated hash
-            force_refresh: If True, ignore cooldown period
-            
-        Returns:
-            bool: True if summary needs updating, False otherwise
-        """
+    def needs_update(folder_id: int, current_hash: Optional[str] = None, force_refresh: bool = False) -> bool:
+        """Check if the summary needs to be updated."""
         try:
             if current_hash is None:
                 current_hash = FolderSummary.calculate_folder_hash(folder_id)
-                
             if current_hash is None:
                 current_app.logger.warning(f"Could not calculate hash for folder {folder_id}")
                 return True
-                
+
             summary = FolderSummary.query.filter_by(folder_id=folder_id).first()
-            
-            # If no summary exists, definitely need update
             if not summary:
                 current_app.logger.info(f"No existing summary found for folder {folder_id}")
                 return True
-                
-            # Check if hash has changed
+
             hash_changed = not summary.file_hash or summary.file_hash.lower() != current_hash.lower()
-            
-            # If hash unchanged and not forcing refresh, check cooldown period
             if not hash_changed and not force_refresh:
-                # Check if enough time has passed since last update
                 if summary.last_updated:
                     elapsed = (datetime.utcnow() - summary.last_updated).total_seconds()
                     if elapsed < FolderSummary.REGENERATION_COOLDOWN:
@@ -192,20 +150,18 @@ class FolderSummary(db.Model):
                             f"last updated {elapsed:.0f} seconds ago"
                         )
                         return False
-                        
+
             if hash_changed:
                 current_app.logger.info(
                     f"Hash changed for folder {folder_id}\n"
                     f"Stored hash: {summary.file_hash}\n"
                     f"Current hash: {current_hash}"
                 )
-            
             return True
-            
         except Exception as e:
             current_app.logger.error(f"Error checking if summary needs update: {str(e)}")
             return True
-            
+
     @staticmethod
     def hash_changed(folder_id, current_hash=None):
         """

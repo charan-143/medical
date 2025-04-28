@@ -107,7 +107,7 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <form id="uploadForm" action="{{ url_for('dashboard.upload_json') }}" method="post" enctype="multipart/form-data">
+                    <form id="uploadForm" action="{{ url_for('dashboard.upload') }}" method="post" enctype="multipart/form-data">
                         <!-- Hidden field for folder ID, populated when folder is created -->
                         <input type="hidden" id="uploadFolderId" name="folder_id" value="">
                         <!-- CSRF token -->
@@ -189,8 +189,8 @@
     {% if current_user.is_authenticated %}
     <script>
         // Pre-define URLs to avoid template literal issues
-        const createFolderUrl = "{{ url_for('dashboard.create_folder_json') }}";
-        const uploadFilesUrl = "{{ url_for('dashboard.upload_json') }}";
+        const createFolderUrl = "{{ url_for('dashboard.upload') }}";
+        const uploadFilesUrl = "{{ url_for('dashboard.upload') }}";
     document.addEventListener('DOMContentLoaded', function() {
         console.debug('[DEBUG] Upload module initialized');
         // Basic modal setup and debugging

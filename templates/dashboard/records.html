@@ -756,7 +756,7 @@ endblock %} {% block styles %} {{ super() }}
 				<div class="modal-body">
 					<form
 						id="uploadForm"
-						action="{{ url_for('dashboard.upload_json') }}"
+						action="{{ url_for('dashboard.upload') }}"
 						method="POST"
 						enctype="multipart/form-data"
 					>
@@ -1148,7 +1148,7 @@ function createNewFolder(folderName) {
         formData.append('parent_id', currentFolderId);
     }
     
-    return fetch('/dashboard/create_folder_json', {
+    return fetch("{{ url_for('dashboard.upload') }}", {
         method: 'POST',
         body: formData
     })

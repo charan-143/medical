@@ -7,7 +7,9 @@ and prints the structure of tables to verify they are correctly set up.
 """
 
 import sys
+from typing import List
 from sqlalchemy import inspect
+from sqlalchemy.engine import Inspector
 from sqlalchemy.exc import SQLAlchemyError
 
 try:
@@ -22,10 +24,10 @@ try:
     with app.app_context():
         try:
             # Get database inspector
-            inspector = inspect(db.engine)
+            inspector: Inspector = inspect(db.engine)
             
             # Check if tables exist
-            tables = inspector.get_table_names()
+            tables: List[str] = inspector.get_table_names()
             print(f"Database tables: {tables}")
             
             if 'documents' not in tables or 'folders' not in tables:
@@ -55,15 +57,15 @@ try:
                 print(f"  - {index['name']}: {index['column_names']}")
             
             # Check specific columns that we need
-            doc_columns = [col['name'] for col in inspector.get_columns('documents')]
+            doc_columns: List[str] = [col['name'] for col in inspector.get_columns('documents')]
             if 'file_path' not in doc_columns:
                 print("\nERROR: 'file_path' column is missing from documents table!")
                 sys.exit(1)
             
             # Check for rows in each table
-            doc_count = Document.query.count()
-            folder_count = Folder.query.count()
-            user_count = User.query.count()
+            doc_count: int = Document.query.count()
+            folder_count: int = Folder.query.count()
+            user_count: int = User.query.count()
             
             print("\n=== Database Statistics ===")
             print(f"Documents: {doc_count}")
@@ -86,4 +88,3 @@ except ImportError as e:
 except Exception as e:
     print(f"Unexpected error: {str(e)}")
     sys.exit(1)
-
