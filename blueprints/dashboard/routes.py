@@ -159,13 +159,14 @@ def upload() -> Union[str, 'Response']:
             os.makedirs(upload_dir, exist_ok=True)
             logger.info(f"Created missing upload directory: {upload_dir}")
         except Exception as e:
+            logger.error(f"Error creating upload directory: {str(e)}", exc_info=True)
             if is_ajax:
                 return jsonify({
                     'success': False,
-                    'message': f"Could not create upload directory: {str(e)}"
+                    'message': "Could not create upload directory. Please contact the administrator."
                 }), 500
             else:
-                flash(f"Upload system error: {str(e)}", 'error')
+                flash("Upload system error. Please contact the administrator.", 'error')
                 return redirect(url_for('dashboard.records'))
     
     # Check write permissions with a quick test
@@ -175,15 +176,14 @@ def upload() -> Union[str, 'Response']:
             f.write('test')
         os.remove(test_file)
     except Exception as e:
-        error_msg = f"Upload directory is not writable: {str(e)}"
-        logger.error(error_msg)
+        logger.error(f"Upload directory is not writable: {str(e)}", exc_info=True)
         if is_ajax:
             return jsonify({
                 'success': False,
-                'message': "Cannot write to upload directory. Please contact administrator."
+                'message': "Cannot write to upload directory. Please contact the administrator."
             }), 500
         else:
-            flash("Upload system error: Permission denied", 'error')
+            flash("Upload system error. Please contact the administrator.", 'error')
             return redirect(url_for('dashboard.records'))
     
     if request.method == 'POST':
