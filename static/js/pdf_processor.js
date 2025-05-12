@@ -9,6 +9,24 @@
  */
 
 class PDFProcessor {
+
+    /**
+     * Utility function to escape HTML special characters
+     * @param {string} str - The string to escape
+     * @returns {string} - The escaped string
+     */
+    escapeHTML(str) {
+        return str.replace(/[&<>"']/g, (char) => {
+            const escapeMap = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            };
+            return escapeMap[char];
+        });
+    }
     constructor() {
         // Configuration
         this.config = {
@@ -124,7 +142,7 @@ class PDFProcessor {
         processingContainer.innerHTML = `
             <div class="pdf-processing-prompt text-center p-4">
                 <p>Would you like to analyze this PDF for images using Gemini 2.0 Flash?</p>
-                <button id="process-pdf-btn" class="btn btn-primary" data-document-id="${documentId}">
+                <button id="process-pdf-btn" class="btn btn-primary" data-document-id="${this.escapeHTML(documentId)}">
                     <i class="fas fa-brain"></i> Analyze PDF Images
                 </button>
             </div>
